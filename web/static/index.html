@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <!-- Top Navigation Bar -->
@@ -29,6 +29,17 @@
       </div>
 
       <div class="topbar-right">
+        <!-- Fast search credits meter -->
+        <button type="button" class="credits-meter-btn" id="creditsMeterBtn" onclick="openCreditsModal()" title="Fast search free tier meter (click for usage & settings)">
+          <div class="meter-text-row">
+            <span class="meter-title" id="meterMainText">Fast search: 1,000 of 1,000 left</span>
+          </div>
+          <div class="meter-bar-track">
+            <div class="meter-bar-fill" id="meterBarFill" style="width: 100%;"></div>
+          </div>
+          <div class="meter-sub-row" id="meterSubText">Resets in 24 days · about 39 per day</div>
+        </button>
+
         <div class="system-status" id="systemStatus">
           <span class="status-dot"></span>
           <span class="status-label">Google API connected · Scraper online</span>
@@ -64,10 +75,26 @@
                 <span id="btnSubmitText">Find leads</span>
               </button>
             </div>
-            <p class="search-hint">Best format: <strong>[Niche] in [City, State]</strong>. Try auto detailing in Miami FL, painters in Denver CO.</p>
+            <div class="search-meta-row">
+              <p class="search-hint">Best format: <strong>[Niche] in [City, State]</strong>. Try auto detailing in Miami FL, painters in Denver CO.</p>
+              <p class="search-estimate-text" id="searchCreditsEstimate">This search will use up to 3 credits (max 60 businesses).</p>
+            </div>
           </div>
 
-          <!-- Secondary Controls Row (Mode + Filters Toggle) -->
+          <!-- Free Tier Limit Reached Hard Stop Alert -->
+          <div class="credit-limit-alert hidden" id="creditLimitAlert" role="alert">
+            <div class="alert-content">
+              <span class="alert-icon">⚠️</span>
+              <div class="alert-text">
+                <strong>Free tier limit reached.</strong> You've reached this month's free limit. Use Deep search (free, local scraper) or wait until the 1st.
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm" onclick="switchToDeepSearch()">
+              Switch to Deep search
+            </button>
+          </div>
+
+          <!-- Secondary Controls Row (Mode + Pages + Filters Toggle) -->
           <div class="search-controls-row">
             <div class="search-mode-selector">
               <span class="control-label">Search engine:</span>
@@ -78,7 +105,17 @@
               <label class="radio-label">
                 <input type="radio" name="searchEngine" value="scraper" onchange="switchEngine('scraper')">
                 <span>Deep search (Local scraper)</span>
+                <span class="free-badge">No credits used</span>
               </label>
+            </div>
+
+            <div class="pages-selector-col" id="pagesSelectorWrapper">
+              <span class="control-label">Pages to fetch:</span>
+              <div class="pill-group" role="group" aria-label="Pages to fetch">
+                <button type="button" class="pill-btn" id="btnPages1" onclick="setPagesToFetch(1)" title="1 page = 1 credit (up to 20 businesses)">1 (quick)</button>
+                <button type="button" class="pill-btn" id="btnPages2" onclick="setPagesToFetch(2)" title="2 pages = 2 credits (up to 40 businesses)">2</button>
+                <button type="button" class="pill-btn active" id="btnPages3" onclick="setPagesToFetch(3)" title="3 pages = 3 credits (up to 60 businesses)">3 (full)</button>
+              </div>
             </div>
 
             <button type="button" class="btn btn-subtle filter-toggle-btn" id="btnToggleFilters" onclick="toggleFiltersPanel()">
@@ -152,6 +189,7 @@
         <div class="results-toolbar">
           <div class="results-summary">
             <span id="resultsSummaryText">Ready to search.</span>
+            <span class="cached-pill hidden" id="cachedResultBadge">Saved result · 0 credits</span>
             <button type="button" class="link-btn hidden" id="btnWhyHidden" onclick="openExcludedModal()">
               Why were others hidden?
             </button>
@@ -409,11 +447,103 @@
     </div>
   </div>
 
+  <!-- ========================================== -->
+  <!-- MODAL: FAST SEARCH CREDITS USAGE           -->
+  <!-- ========================================== -->
+  <div class="modal-backdrop hidden" id="creditsModal" onclick="closeModalOnBackdrop(event, 'creditsModal')">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Fast search credit usage</h3>
+          <p class="modal-subtitle">Track Google Places API Text Search Enterprise SKU (1,000 free requests per calendar month, Pacific Time).</p>
+        </div>
+        <button type="button" class="btn-close" onclick="closeCreditsModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Stats Overview Cards -->
+        <div class="credits-stats-grid">
+          <div class="stat-card">
+            <span class="stat-num" id="modalUsedCredits">0</span>
+            <span class="stat-label">Used this month</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="modalRemainingCredits">1,000</span>
+            <span class="stat-label">Credits remaining</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="modalDailyRate">about 39</span>
+            <span class="stat-label">Safe daily rate</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="modalResetDays">24 days</span>
+            <span class="stat-label">Resets in</span>
+          </div>
+        </div>
+
+        <!-- Editable Limits Setting -->
+        <div class="settings-box">
+          <h4 class="settings-box-title">Free tier thresholds</h4>
+          <div class="settings-inputs-row">
+            <div class="input-col">
+              <label for="inputMonthlyLimit" class="form-label">Monthly free limit</label>
+              <input type="number" id="inputMonthlyLimit" class="input-field-sm" min="1" max="10000" value="1000">
+              <p class="field-hint">Google provides 1,000 free Text Search requests/month.</p>
+            </div>
+            <div class="input-col">
+              <label for="inputSafetyBuffer" class="form-label">Safety buffer</label>
+              <input type="number" id="inputSafetyBuffer" class="input-field-sm" min="0" max="500" value="50">
+              <p class="field-hint">Hard stop triggers when remaining credits reach this buffer.</p>
+            </div>
+            <div class="input-col-btn">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="saveCreditSettings()">
+                Save settings
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Official Disclaimer Note -->
+        <div class="disclaimer-note">
+          <span class="note-icon">ℹ️</span>
+          <span>This is an estimate counted by this app. Check <strong>Google Cloud Console &gt; Places API (New) &gt; Metrics</strong> for exact billing usage.</span>
+        </div>
+
+        <!-- Last 30 Searches Table -->
+        <div class="logs-header-row">
+          <h4 class="settings-box-title">Recent searches (last 30)</h4>
+          <span class="quiet-hint">Pacific Time (Google billing)</span>
+        </div>
+        <div class="table-wrapper modal-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 25%;">Date / Time</th>
+                <th style="width: 45%;">Query</th>
+                <th style="width: 15%;">Credits</th>
+                <th style="width: 15%; text-align: right;">Status</th>
+              </tr>
+            </thead>
+            <tbody id="creditsLogsTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeCreditsModal()">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirmation Toast Notification -->
   <div class="toast-notification hidden" id="toastNotification" role="alert" aria-live="polite">
     <span class="toast-message" id="toastMessage">Action completed</span>
   </div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

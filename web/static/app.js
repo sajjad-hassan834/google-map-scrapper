@@ -11,6 +11,8 @@ let excludedLeads = [];
 let crmLeads = [];
 let activeDrawerLeadId = null;
 let notesDebounceTimer = null;
+let pagesToFetch = 3;
+let currentCreditStatus = null;
 // Base API URL: Defaults to relative /api or custom Railway backend URL
 const API_BASE = window.API_BASE_URL || localStorage.getItem('MAPLEAD_API_BASE') || '';
 
@@ -42,6 +44,7 @@ const leadsTableBody = document.getElementById('leadsTableBody');
 document.addEventListener('DOMContentLoaded', () => {
   checkScraperHealth();
   loadCrmLeads();
+  loadCreditsStatus();
 
   if (inputMinReviews) {
     inputMinReviews.addEventListener('input', (e) => {
@@ -57,6 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') {
       closeLeadDrawer();
       closeExcludedModal();
+      closeCreditsModal();
     }
   });
 });
@@ -92,8 +96,171 @@ function setAppMode(mode) {
 function switchEngine(engine) {
   currentEngine = engine;
   const depthCol = document.getElementById('scraperDepthCol');
+  const pagesWrapper = document.getElementById('pagesSelectorWrapper');
+  const estimateText = document.getElementById('searchCreditsEstimate');
+
   if (depthCol) {
     depthCol.classList.toggle('hidden', engine !== 'scraper');
+  }
+
+  if (pagesWrapper) {
+    pagesWrapper.classList.toggle('hidden', engine === 'scraper');
+  }
+
+  if (estimateText) {
+    if (engine === 'scraper') {
+      estimateText.textContent = 'Deep search uses no Google credits (unlimited, free).';
+    } else {
+      estimateText.textContent = `This search will use up to ${pagesToFetch} credits (max ${pagesToFetch * 20} businesses).`;
+    }
+  }
+}
+
+function setPagesToFetch(n) {
+  pagesToFetch = Math.max(1, Math.min(3, n));
+  [1, 2, 3].forEach(num => {
+    const btn = document.getElementById(`btnPages${num}`);
+    if (btn) btn.classList.toggle('active', num === pagesToFetch);
+  });
+
+  const estimateText = document.getElementById('searchCreditsEstimate');
+  if (estimateText && currentEngine === 'places') {
+    estimateText.textContent = `This search will use up to ${pagesToFetch} credits (max ${pagesToFetch * 20} businesses).`;
+  }
+}
+
+function switchToDeepSearch() {
+  const radio = document.querySelector('input[name="searchEngine"][value="scraper"]');
+  if (radio) radio.checked = true;
+  switchEngine('scraper');
+
+  const alertBox = document.getElementById('creditLimitAlert');
+  if (alertBox) alertBox.classList.add('hidden');
+
+  showToast('Switched to Deep search (0 credits)');
+}
+
+// Credits Meter & Settings
+async function loadCreditsStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/credits/status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentCreditStatus = data;
+    updateCreditsMeterUI(data);
+  } catch (e) {
+    console.error('Failed to load credits status:', e);
+  }
+}
+
+function updateCreditsMeterUI(status) {
+  if (!status) return;
+  const meterBtn = document.getElementById('creditsMeterBtn');
+  const mainText = document.getElementById('meterMainText');
+  const barFill = document.getElementById('meterBarFill');
+  const subText = document.getElementById('meterSubText');
+
+  if (mainText) {
+    mainText.textContent = `Fast search: ${status.credits_left.toLocaleString()} of ${status.monthly_limit.toLocaleString()} left`;
+  }
+
+  const pct = Math.max(0, Math.min(100, status.percentage_left || 0));
+  if (barFill) {
+    barFill.style.width = `${pct}%`;
+  }
+
+  if (subText) {
+    subText.textContent = `Resets in ${status.days_remaining} days · about ${status.daily_rate} per day`;
+  }
+
+  if (meterBtn) {
+    meterBtn.classList.remove('meter-warn', 'meter-danger');
+    if (pct < 10) {
+      meterBtn.classList.add('meter-danger');
+    } else if (pct < 25) {
+      meterBtn.classList.add('meter-warn');
+    }
+  }
+}
+
+async function openCreditsModal() {
+  const modal = document.getElementById('creditsModal');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/credits/status`);
+    if (res.ok) {
+      const data = await res.json();
+      currentCreditStatus = data;
+      updateCreditsMeterUI(data);
+
+      document.getElementById('modalUsedCredits').textContent = data.used.toLocaleString();
+      document.getElementById('modalRemainingCredits').textContent = data.credits_left.toLocaleString();
+      document.getElementById('modalDailyRate').textContent = `about ${data.daily_rate}`;
+      document.getElementById('modalResetDays').textContent = `${data.days_remaining} days`;
+
+      document.getElementById('inputMonthlyLimit').value = data.monthly_limit;
+      document.getElementById('inputSafetyBuffer').value = data.safety_buffer;
+
+      const tbody = document.getElementById('creditsLogsTableBody');
+      const recent = data.recent_searches || [];
+      if (recent.length === 0) {
+        tbody.innerHTML = `
+          <tr class="empty-row">
+            <td colspan="4" style="text-align: center; color: var(--color-text-muted); padding: 24px;">
+              No searches recorded yet this month.
+            </td>
+          </tr>
+        `;
+      } else {
+        tbody.innerHTML = recent.map(log => {
+          const statusBadge = log.cached ?
+            '<span class="free-badge">Saved (0 credits)</span>' :
+            '<span class="quiet-hint">Fresh API call</span>';
+          return `
+            <tr>
+              <td><span class="quiet-hint">${escapeHtml(log.search_date)}</span></td>
+              <td><strong>${escapeHtml(log.query)}</strong></td>
+              <td>${log.credits_used} credit${log.credits_used === 1 ? '' : 's'}</td>
+              <td style="text-align: right;">${statusBadge}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+  } catch (e) {
+    console.error('Error fetching credit modal data:', e);
+  }
+}
+
+function closeCreditsModal() {
+  const modal = document.getElementById('creditsModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function saveCreditSettings() {
+  const limit = parseInt(document.getElementById('inputMonthlyLimit').value) || 1000;
+  const buffer = parseInt(document.getElementById('inputSafetyBuffer').value) || 50;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/credits/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monthly_limit: limit, safety_buffer: buffer })
+    });
+
+    if (res.ok) {
+      const updated = await res.json();
+      currentCreditStatus = updated;
+      updateCreditsMeterUI(updated);
+      showToast('Credit settings saved');
+      closeCreditsModal();
+    } else {
+      showToast('Failed to save settings');
+    }
+  } catch (e) {
+    showToast('Network error saving settings');
   }
 }
 
@@ -157,6 +324,8 @@ async function handleSearchSubmit(e) {
 
 async function runPlacesSearch(query) {
   showProgress('Searching Google Places...', 35);
+  const creditAlert = document.getElementById('creditLimitAlert');
+  if (creditAlert) creditAlert.classList.add('hidden');
 
   try {
     const payload = {
@@ -166,7 +335,7 @@ async function runPlacesSearch(query) {
       min_reviews: parseInt(inputMinReviews.value) || 0,
       min_rating: parseFloat(selectMinRating.value) || 0,
       must_have_phone: checkMustHavePhone.checked,
-      max_pages: 3
+      max_pages: pagesToFetch
     };
 
     const resp = await fetch(`${API_BASE}/api/places/search`, {
@@ -177,6 +346,12 @@ async function runPlacesSearch(query) {
 
     if (!resp.ok) {
       const err = await resp.json();
+      if (resp.status === 429 || (err.detail && err.detail.includes('free limit'))) {
+        if (creditAlert) {
+          creditAlert.classList.remove('hidden');
+          creditAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
       throw new Error(err.detail || 'Failed to search Google Places.');
     }
 
@@ -186,11 +361,21 @@ async function runPlacesSearch(query) {
     qualifiedLeads = data.results || [];
     excludedLeads = data.excluded_results || [];
 
-    updateResultsSummary(data.total_scanned, qualifiedLeads.length, excludedLeads.length);
+    // Cache indicator pill
+    const cachedBadge = document.getElementById('cachedResultBadge');
+    if (cachedBadge) {
+      cachedBadge.classList.toggle('hidden', !data.from_cache);
+    }
+
+    if (data.credit_status) {
+      updateCreditsMeterUI(data.credit_status);
+    }
+
+    updateResultsSummary(data.total_scanned, qualifiedLeads.length, excludedLeads.length, data.from_cache);
     renderResultsTable();
   } catch (err) {
-    showToast(`Search failed: ${err.message}`);
-    resultsSummaryText.textContent = 'Search failed. Please try again.';
+    showToast(`Search: ${err.message}`);
+    resultsSummaryText.textContent = err.message.includes('free limit') ? 'Monthly free limit reached.' : 'Search failed. Please try again.';
   } finally {
     setTimeout(hideProgress, 800);
   }
@@ -277,12 +462,13 @@ async function runScraperSearch(query) {
   }
 }
 
-function updateResultsSummary(totalScanned, qualifiedCount, excludedCount) {
+function updateResultsSummary(totalScanned, qualifiedCount, excludedCount, fromCache = false) {
   if (totalScanned === 0) {
     resultsSummaryText.textContent = '0 businesses found.';
     btnWhyHidden.classList.add('hidden');
   } else {
-    resultsSummaryText.textContent = `${qualifiedCount} of ${totalScanned} businesses match.`;
+    const cacheNotice = fromCache ? ' (from 30-day cache, 0 credits)' : '';
+    resultsSummaryText.textContent = `${qualifiedCount} of ${totalScanned} businesses match${cacheNotice}.`;
     btnWhyHidden.classList.toggle('hidden', excludedCount === 0);
   }
 

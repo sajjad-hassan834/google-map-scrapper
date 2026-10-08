@@ -16,6 +16,11 @@ from web.crm_db import (
     get_all_crm_leads, save_or_update_lead, import_bulk_leads,
     update_lead_stage, update_lead_notes, delete_lead, get_crm_stats
 )
+from web.credits_db import (
+    get_credit_status, update_credit_settings, increment_credit_usage,
+    log_places_search, generate_cache_key, get_cached_search_results,
+    store_cached_search_results
+)
 
 app = FastAPI(title="MapLead Pro & CRM Engine", version="2.5.0")
 
@@ -52,6 +57,10 @@ class PlacesSearchRequest(BaseModel):
     min_rating: float = 0.0
     must_have_phone: bool = True
     max_pages: int = 3
+
+class CreditSettingsUpdate(BaseModel):
+    monthly_limit: int = Field(default=1000, ge=1)
+    safety_buffer: int = Field(default=50, ge=0)
 
 class ScraperJobRequest(BaseModel):
     keywords: List[str]
@@ -125,10 +134,11 @@ def compute_opportunity(rating: float, reviews: int, has_website: bool) -> Dict[
 
 # ----------------- Google Places API (New) -----------------
 
-def search_google_places_new(api_key: str, query: str, max_pages: int = 3) -> List[Dict[str, Any]]:
+def search_google_places_new(api_key: str, query: str, max_pages: int = 3):
     all_places = []
     next_page_token = None
     url = "https://places.googleapis.com/v1/places:searchText"
+    requests_sent = 0
     
     headers = {
         "Content-Type": "application/json",
@@ -148,6 +158,11 @@ def search_google_places_new(api_key: str, query: str, max_pages: int = 3) -> Li
 
         req_data = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
+
+        # Increment count BEFORE/AS request is dispatched so failed requests are counted
+        increment_credit_usage(1)
+        requests_sent += 1
+
         try:
             with urllib.request.urlopen(request, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -165,7 +180,7 @@ def search_google_places_new(api_key: str, query: str, max_pages: int = 3) -> Li
             break
         time.sleep(1.2)
 
-    return all_places
+    return all_places, requests_sent
 
 
 def format_places_new_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,15 +219,55 @@ def api_places_config():
     return {"has_env_key": has_key}
 
 
+@app.get("/api/credits/status")
+def api_credits_status():
+    return get_credit_status()
+
+
+@app.patch("/api/credits/settings")
+def api_credits_settings(settings: CreditSettingsUpdate):
+    return update_credit_settings(settings.monthly_limit, settings.safety_buffer)
+
+
 @app.post("/api/places/search")
 def api_places_search(req: PlacesSearchRequest):
     api_key = (req.api_key or "").strip() or os.environ.get("PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if not api_key:
-        raise HTTPException(status_code=400, detail="Google Places API Key is required. Please enter it in the header settings or save PLACES_API_KEY in .env.")
+        raise HTTPException(status_code=400, detail="Google Places API Key is required. Please save PLACES_API_KEY in your environment.")
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Search query is required.")
 
-    raw_places = search_google_places_new(api_key, req.query.strip(), max_pages=req.max_pages)
+    # 1. Check 30-Day Result Cache
+    pages_to_fetch = max(1, min(3, req.max_pages))
+    filters_dict = {
+        "no_website_only": req.no_website_only,
+        "min_reviews": req.min_reviews,
+        "min_rating": req.min_rating,
+        "must_have_phone": req.must_have_phone,
+        "max_pages": pages_to_fetch
+    }
+    cache_key = generate_cache_key(req.query, filters_dict)
+    cached_data = get_cached_search_results(cache_key)
+    if cached_data:
+        log_places_search(req.query.strip(), pages_to_fetch, credits_used=0, cached=True)
+        cached_data["from_cache"] = True
+        cached_data["credits_used"] = 0
+        cached_data["credit_status"] = get_credit_status()
+        return cached_data
+
+    # 2. Enforce Free Tier Credit Hard Stop
+    credit_status = get_credit_status()
+    safe_left = credit_status["safe_credits_left"]
+    if safe_left < pages_to_fetch:
+        raise HTTPException(
+            status_code=429,
+            detail="You've reached this month's free limit. Use Deep search (free, local scraper) or wait until the 1st."
+        )
+
+    # 3. Execute Search
+    raw_places, requests_used = search_google_places_new(api_key, req.query.strip(), max_pages=pages_to_fetch)
+    log_places_search(req.query.strip(), pages_to_fetch, credits_used=requests_used, cached=False)
+
     total_scanned = len(raw_places)
     formatted = [format_places_new_item(p) for p in raw_places]
 
@@ -252,7 +307,6 @@ def api_places_search(req: PlacesSearchRequest):
     qualified.sort(key=lambda x: (x["reviews"], x["rating"]), reverse=True)
     hot_leads_count = sum(1 for x in qualified if "HOT" in x["opportunity_tier"])
 
-    # Clear human explanation message
     explanation = (
         f"Google returned {total_scanned} total businesses for '{req.query}'. "
         f"{len(qualified)} matched all your filters. "
@@ -260,10 +314,8 @@ def api_places_search(req: PlacesSearchRequest):
         f"{breakdown['excluded_low_reviews']} have < {req.min_reviews} reviews, "
         f"{breakdown['excluded_no_phone']} missing phone)."
     )
-    if total_scanned < 10 and "in usa" in req.query.lower():
-        explanation += " 💡 Tip: Broad nationwide queries like 'in usa' return only headquarters. Target a specific city (e.g. 'Miami FL' or 'Dallas TX') to find dozens of local businesses!"
 
-    return {
+    response_payload = {
         "total_scanned": total_scanned,
         "qualified_count": len(qualified),
         "excluded_count": len(excluded),
@@ -271,8 +323,15 @@ def api_places_search(req: PlacesSearchRequest):
         "results": qualified,
         "excluded_results": excluded,
         "filtering_breakdown": breakdown,
-        "explanation": explanation
+        "explanation": explanation,
+        "from_cache": False,
+        "credits_used": requests_used,
+        "credit_status": get_credit_status()
     }
+
+    # 4. Store in 30-Day Cache
+    store_cached_search_results(cache_key, req.query.strip(), response_payload)
+    return response_payload
 
 
 # ----------------- CRM Endpoints -----------------
