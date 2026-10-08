@@ -11,6 +11,7 @@ let excludedLeads = [];
 let crmLeads = [];
 let activeDrawerLeadId = null;
 let notesDebounceTimer = null;
+let toastTimer = null;
 let pagesToFetch = 3;
 let currentCreditStatus = null;
 let currentUser = null;
@@ -163,17 +164,21 @@ function updateUserMenuUI() {
   const displayNameEl = document.getElementById('userMenuBrandTitle');
   const roleTagEl = document.getElementById('userMenuRoleTag');
   const menuItemTeam = document.getElementById('menuItemTeam');
+  const deepSearchRadio = document.getElementById('deepSearchRadioLabel');
 
-  const name = currentUser.display_name || currentUser.username || 'Admin';
+  const name = currentUser.display_name || currentUser.username || (currentUser.email ? currentUser.email.split('@')[0] : 'Admin');
   if (displayNameEl) displayNameEl.textContent = name;
   if (avatarBtn) avatarBtn.textContent = (name.charAt(0) || 'A').toUpperCase();
 
-  const isAdmin = currentUser.role === 'admin';
+  const isOwnerOrAdmin = currentUser.role === 'admin' || currentUser.role === 'owner';
   if (roleTagEl) {
-    roleTagEl.textContent = isAdmin ? 'Admin' : 'Member';
+    roleTagEl.textContent = isOwnerOrAdmin ? 'Admin' : 'Member';
   }
   if (menuItemTeam) {
-    menuItemTeam.classList.toggle('hidden', !isAdmin);
+    menuItemTeam.classList.toggle('hidden', !isOwnerOrAdmin);
+  }
+  if (deepSearchRadio) {
+    deepSearchRadio.classList.toggle('hidden', !isOwnerOrAdmin);
   }
 }
 
@@ -578,7 +583,7 @@ async function handlePasswordChangeSubmit(event) {
   }
 }
 
-// User Accounts CRUD for Admins
+// User Accounts & Monthly Distribution for Admins
 async function loadAllUsers() {
   const tbody = document.getElementById('usersTableBody');
   if (!tbody) return;
@@ -586,12 +591,34 @@ async function loadAllUsers() {
   tbody.innerHTML = `
     <tr>
       <td colspan="5" style="text-align: center; color: var(--color-text-muted); padding: 24px;">
-        Loading team accounts...
+        Loading monthly quotas and team accounts...
       </td>
     </tr>
   `;
 
   try {
+    // 1. Fetch monthly distribution overview
+    const distRes = await apiFetch(`${API_BASE}/api/admin/distribution`);
+    if (distRes.ok) {
+      const distData = await distRes.json();
+      const monthEl = document.getElementById('distBillingMonth');
+      const allocEl = document.getElementById('distTotalAllocated');
+      const usedEl = document.getElementById('distTotalUsed');
+      const resetEl = document.getElementById('distDaysRemaining');
+
+      if (monthEl) monthEl.textContent = distData.billing_month || 'Current';
+      if (allocEl) allocEl.textContent = (distData.total_credits_allocated || 0).toLocaleString();
+      if (usedEl) usedEl.textContent = (distData.total_credits_used || 0).toLocaleString();
+      if (resetEl) resetEl.textContent = `${distData.days_remaining || 0} days`;
+
+      if (distData.users) {
+        teamUsersList = distData.users;
+        renderUsersTable(teamUsersList);
+        return;
+      }
+    }
+
+    // Fallback to /api/users
     const res = await apiFetch(`${API_BASE}/api/users`);
     if (!res.ok) {
       tbody.innerHTML = `
@@ -634,12 +661,12 @@ function renderUsersTable(users) {
   }
 
   tbody.innerHTML = users.map(u => {
-    const isSelf = currentUser && (currentUser.id === u.id || currentUser.username === u.username);
-    const isAdmin = u.role === 'admin';
-    const isActive = u.status === 'active';
+    const isSelf = currentUser && (currentUser.id === u.id || currentUser.email === u.email);
+    const isOwner = u.role === 'owner' || u.role === 'admin';
+    const isActive = u.is_active === 1 || u.is_active === true || u.status === 'active';
 
-    const roleBadge = isAdmin ?
-      '<span class="role-badge admin">Admin</span>' :
+    const roleBadge = isOwner ?
+      '<span class="role-badge admin">Owner</span>' :
       '<span class="role-badge member">Member</span>';
 
     const statusBadge = isActive ?
@@ -647,39 +674,77 @@ function renderUsersTable(users) {
       '<span class="status-badge disabled">Disabled</span>';
 
     const userSelfTag = isSelf ? ' <span class="quiet-hint" style="font-size:11px;">(You)</span>' : '';
+    const planName = u.plan_name || (isOwner ? 'Unlimited' : (u.plan_id === 'pro' ? 'Pro' : 'Free'));
+    const monthlyLimit = isOwner ? 'Unlimited' : `${u.monthly_searches || 10} / mo`;
+    const usedCount = u.credits_used_this_month || 0;
 
     return `
       <tr>
         <td>
-          <strong style="color: var(--color-text-main);">${escapeHtml(u.username)}</strong>${userSelfTag}
+          <strong style="color: var(--color-text-main);">${escapeHtml(u.display_name || u.email || 'User')}</strong>${userSelfTag}
+          <div class="quiet-hint" style="font-size: 11px;">${escapeHtml(u.email || u.id || '')}</div>
         </td>
         <td>
-          <div>${escapeHtml(u.display_name || '—')}</div>
-          <div class="quiet-hint" style="font-size: 11px;">${escapeHtml(u.email || 'No email')}</div>
+          <div><strong>${escapeHtml(planName)}</strong> (${monthlyLimit})</div>
+          <div class="quiet-hint" style="font-size: 11px;">Auto resets 1st of month</div>
         </td>
-        <td>${roleBadge}</td>
+        <td>
+          <div><strong>${usedCount}</strong> credits used</div>
+          <div class="quiet-hint" style="font-size: 11px;">Pacing: ~${Math.round(usedCount / Math.max(1, 30 - (currentCreditStatus?.days_remaining || 24)))} / day</div>
+        </td>
         <td>${statusBadge}</td>
         <td style="text-align: right;">
           <div style="display: inline-flex; gap: 6px; align-items: center; justify-content: flex-end;">
-            <button type="button" class="btn-action-sm" onclick="openEditUserModal('${u.id}')" title="Edit account details">
-              Edit
-            </button>
-            <button type="button" class="btn-action-sm" onclick="promptResetUserPassword('${u.id}', '${escapeHtml(u.username)}')" title="Reset password">
-              Key
-            </button>
-            ${!isSelf ? `
-              <button type="button" class="btn-action-sm" onclick="toggleUserStatus('${u.id}', '${u.status}')" title="${isActive ? 'Disable account' : 'Activate account'}">
+            ${!isOwner ? `
+              <button type="button" class="btn-action-sm" onclick="toggleUserPlanQuick('${u.id}', '${u.plan_id || 'free'}')" title="Switch Plan">
+                ${u.plan_id === 'pro' ? 'Set Free' : 'Set Pro'}
+              </button>
+              <button type="button" class="btn-action-sm" onclick="toggleUserStatus('${u.id}', ${isActive ? 'false' : 'true'})" title="${isActive ? 'Disable account' : 'Activate account'}">
                 ${isActive ? 'Disable' : 'Enable'}
               </button>
-              <button type="button" class="btn-action-sm danger" onclick="deleteUserAccount('${u.id}', '${escapeHtml(u.username)}')" title="Delete user">
-                Delete
-              </button>
-            ` : ''}
+            ` : '<span class="quiet-hint" style="font-size:11px;">Owner</span>'}
           </div>
         </td>
       </tr>
     `;
   }).join('');
+}
+
+async function toggleUserPlanQuick(userId, currentPlanId) {
+  const newPlan = currentPlanId === 'pro' ? 'free' : 'pro';
+  try {
+    const res = await apiFetch(`${API_BASE}/api/admin/users/${encodeURIComponent(userId)}/plan`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: newPlan })
+    });
+    if (res.ok) {
+      showToast(`User plan updated to ${newPlan.toUpperCase()}`);
+      loadAllUsers();
+    } else {
+      showToast('Failed to update user plan');
+    }
+  } catch (e) {
+    showToast('Network error updating plan');
+  }
+}
+
+async function toggleUserStatus(userId, targetActive) {
+  try {
+    const res = await apiFetch(`${API_BASE}/api/admin/users/${encodeURIComponent(userId)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: targetActive === true || targetActive === 'true' })
+    });
+    if (res.ok) {
+      showToast(targetActive ? 'User account activated' : 'User account disabled');
+      loadAllUsers();
+    } else {
+      showToast('Failed to change user status');
+    }
+  } catch (e) {
+    showToast('Network error updating status');
+  }
 }
 
 function openCreateUserModal() {
@@ -976,17 +1041,35 @@ function updateCreditsMeterUI(status) {
   const barFill = document.getElementById('meterBarFill');
   const subText = document.getElementById('meterSubText');
 
+  const creditsRemaining = status.credits_left !== undefined ? status.credits_left : (status.user_remaining !== undefined ? status.user_remaining : 0);
+  const creditsLimit = status.monthly_limit || status.user_limit || 1000;
+  const pct = Math.max(0, Math.min(100, status.percentage_left !== undefined ? status.percentage_left : Math.round(creditsRemaining / creditsLimit * 100)));
+
   if (mainText) {
-    mainText.textContent = `Fast search: ${status.credits_left.toLocaleString()} of ${status.monthly_limit.toLocaleString()} left`;
+    mainText.textContent = `Fast search: ${creditsRemaining.toLocaleString()} of ${creditsLimit.toLocaleString()} left`;
   }
 
-  const pct = Math.max(0, Math.min(100, status.percentage_left || 0));
   if (barFill) {
     barFill.style.width = `${pct}%`;
   }
 
   if (subText) {
-    subText.textContent = `Resets in ${status.days_remaining} days · about ${status.daily_rate} per day`;
+    subText.textContent = `Resets in ${status.days_remaining} days · about ${status.daily_rate || 0} per day`;
+  }
+
+  // ElevenLabs-style widget under profile in user menu dropdown
+  const menuCreditsRemainingText = document.getElementById('menuCreditsRemainingText');
+  const menuCreditsBarFill = document.getElementById('menuCreditsBarFill');
+  const menuCreditsResetMeta = document.getElementById('menuCreditsResetMeta');
+
+  if (menuCreditsRemainingText) {
+    menuCreditsRemainingText.textContent = `${creditsRemaining.toLocaleString()} / ${creditsLimit.toLocaleString()}`;
+  }
+  if (menuCreditsBarFill) {
+    menuCreditsBarFill.style.width = `${pct}%`;
+  }
+  if (menuCreditsResetMeta) {
+    menuCreditsResetMeta.textContent = `Resets in ${status.days_remaining} days · ~${status.daily_rate || status.daily_pace || 0}/day`;
   }
 
   if (meterBtn) {
@@ -1319,6 +1402,20 @@ function renderResultsTable() {
     const cleanPhone = (lead.phone || '').replace(/[^0-9+]/g, '');
     const isTopLead = (lead.reviews >= 50 && lead.rating >= 4.3);
 
+    let socialIconsHtml = '';
+    if (lead.social_links && typeof lead.social_links === 'object') {
+      const s = lead.social_links;
+      const badges = [];
+      if (s.facebook) badges.push(`<a href="${escapeHtml(s.facebook)}" target="_blank" rel="noopener" class="social-badge-link" title="Facebook">f</a>`);
+      if (s.instagram) badges.push(`<a href="${escapeHtml(s.instagram)}" target="_blank" rel="noopener" class="social-badge-link" title="Instagram">ig</a>`);
+      if (s.linkedin) badges.push(`<a href="${escapeHtml(s.linkedin)}" target="_blank" rel="noopener" class="social-badge-link" title="LinkedIn">in</a>`);
+      if (s.twitter) badges.push(`<a href="${escapeHtml(s.twitter)}" target="_blank" rel="noopener" class="social-badge-link" title="Twitter/X">𝕏</a>`);
+      if (s.youtube) badges.push(`<a href="${escapeHtml(s.youtube)}" target="_blank" rel="noopener" class="social-badge-link" title="YouTube">▶</a>`);
+      if (badges.length > 0) {
+        socialIconsHtml = `<div class="social-links-row">${badges.join('')}</div>`;
+      }
+    }
+
     return `
       <tr data-lead-id="${escapeHtml(lead.id)}">
         <td>
@@ -1326,7 +1423,9 @@ function renderResultsTable() {
           <span class="business-sub">
             ${escapeHtml(lead.category || 'Local business')}
             ${isTopLead ? '<span class="tag-top-lead">Top lead</span>' : ''}
+            ${!lead.has_website ? '<span class="quiet-hint" style="color:#d97706; font-weight:600; margin-left:6px;">🔥 No website</span>' : ''}
           </span>
+          ${socialIconsHtml}
         </td>
         <td>
           <div class="rating-info">
@@ -1341,9 +1440,14 @@ function renderResultsTable() {
         </td>
         <td>
           <span class="address-text" title="${escapeHtml(lead.address)}">${escapeHtml(lead.address || '—')}</span>
-          ${lead.google_maps_url ? `
-            <a href="${lead.google_maps_url}" target="_blank" rel="noopener" class="maps-text-link">Google Maps ↗</a>
-          ` : ''}
+          <div style="display: flex; gap: 8px; margin-top: 2px;">
+            ${lead.website ? `
+              <a href="${escapeHtml(lead.website)}" target="_blank" rel="noopener" class="maps-text-link">Website ↗</a>
+            ` : ''}
+            ${lead.google_maps_url ? `
+              <a href="${lead.google_maps_url}" target="_blank" rel="noopener" class="maps-text-link">Google Maps ↗</a>
+            ` : ''}
+          </div>
         </td>
         <td style="text-align: right;">
           ${isSaved ? `
@@ -1511,7 +1615,7 @@ function renderCrmTable() {
   }).join('');
 }
 
-// Save Single Lead to CRM
+// Save Single Lead to CRM (Saves and immediately disappears from page with confirmation popup)
 async function saveSingleLead(idx) {
   const lead = qualifiedLeads[idx];
   if (!lead) return;
@@ -1523,18 +1627,24 @@ async function saveSingleLead(idx) {
       body: JSON.stringify(lead)
     });
     if (res.ok) {
-      showToast(`Saved ${lead.name} to My leads`);
+      // Remove from current search results table so it immediately disappears
+      const removedLead = qualifiedLeads.splice(idx, 1)[0];
+      showToast(`✓ Saved to CRM: ${removedLead.name}`);
       await loadCrmLeads();
+      updateResultsSummary(qualifiedLeads.length + excludedLeads.length, qualifiedLeads.length, excludedLeads.length);
       renderResultsTable();
+    } else {
+      showToast('Failed to save lead');
     }
   } catch (e) {
     showToast('Failed to save lead');
   }
 }
 
-// Bulk Save All Qualified Leads to CRM
+// Bulk Save All Qualified Leads to CRM (Saves all and clears from search view)
 async function importAllToCrm() {
   if (qualifiedLeads.length === 0) return;
+  const count = qualifiedLeads.length;
 
   try {
     const res = await apiFetch(`${API_BASE}/api/crm/import`, {
@@ -1545,9 +1655,13 @@ async function importAllToCrm() {
 
     if (res.ok) {
       const data = await res.json();
-      showToast(`Saved ${data.imported_count} leads to My leads`);
+      qualifiedLeads = [];
+      showToast(`✓ Saved ${count} leads to CRM`);
       await loadCrmLeads();
+      updateResultsSummary(excludedLeads.length, 0, excludedLeads.length);
       renderResultsTable();
+    } else {
+      showToast('Failed to save all leads');
     }
   } catch (e) {
     showToast('Failed to save all leads');

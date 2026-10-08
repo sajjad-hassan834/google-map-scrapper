@@ -101,8 +101,21 @@
             </button>
             <div class="user-menu-dropdown hidden" id="userMenuDropdown" role="menu" aria-orientation="vertical">
               <div class="user-menu-header">
-                <div class="user-menu-brand" id="userMenuBrandTitle">Admin</div>
-                <div class="user-menu-status" id="userMenuRoleTag">Admin</div>
+                <div class="user-menu-profile-row">
+                  <div class="user-menu-brand" id="userMenuBrandTitle">Sajjad Hassan</div>
+                  <div class="user-menu-status" id="userMenuRoleTag">Admin</div>
+                </div>
+                <!-- ElevenLabs-style Credit Meter Widget -->
+                <div class="user-menu-credits-box" id="userMenuCreditsBox">
+                  <div class="menu-credits-top">
+                    <span class="menu-credits-title">Fast search credits</span>
+                    <span class="menu-credits-val" id="menuCreditsRemainingText">1,000 / 1,000</span>
+                  </div>
+                  <div class="menu-credits-track">
+                    <div class="menu-credits-fill" id="menuCreditsBarFill" style="width: 100%;"></div>
+                  </div>
+                  <div class="menu-credits-reset" id="menuCreditsResetMeta">Resets in 23 days</div>
+                </div>
               </div>
               <button type="button" class="user-menu-item" role="menuitem" onclick="openAccountModal()">
                 <span class="menu-icon">👤</span>
@@ -152,7 +165,7 @@
                 type="text" 
                 id="inputQuery" 
                 class="search-input" 
-                placeholder="e.g. roofers in Tampa FL, dentists in Austin TX" 
+                placeholder="e.g. roofers in Tampa FL, dentists in London UK" 
                 value="roofers in Tampa FL" 
                 required
                 autocomplete="off"
@@ -163,7 +176,7 @@
               </button>
             </div>
             <div class="search-meta-row">
-              <p class="search-hint">Best format: <strong>[Niche] in [City, State]</strong>. Try auto detailing in Miami FL, painters in Denver CO.</p>
+              <p class="search-hint">Format: <strong>[Niche] in [City or Country]</strong>. Try roofers in London UK, dentists in Austin TX.</p>
               <p class="search-estimate-text" id="searchCreditsEstimate">This search will use up to 3 credits (max 60 businesses).</p>
             </div>
           </div>
@@ -173,11 +186,11 @@
             <div class="alert-content">
               <span class="alert-icon">⚠️</span>
               <div class="alert-text">
-                <strong>Free tier limit reached.</strong> You've reached this month's free limit. Use Deep search (free, local scraper) or wait until the 1st.
+                <strong>Free tier limit reached.</strong> You've reached this month's free limit. Use your own Google API key in Settings or upgrade.
               </div>
             </div>
-            <button type="button" class="btn btn-primary btn-sm" onclick="switchToDeepSearch()">
-              Switch to Deep search
+            <button type="button" class="btn btn-primary btn-sm" onclick="openSettingsModal()">
+              Open Settings
             </button>
           </div>
 
@@ -189,25 +202,25 @@
                 <input type="radio" name="searchEngine" value="places" checked onchange="switchEngine('places')">
                 <span>Fast search (Google Places)</span>
               </label>
-              <label class="radio-label">
+              <label class="radio-label hidden" id="deepSearchRadioLabel">
                 <input type="radio" name="searchEngine" value="scraper" onchange="switchEngine('scraper')">
                 <span>Deep search (Local scraper)</span>
-                <span class="free-badge">No credits used</span>
+                <span class="free-badge">Owner only</span>
               </label>
             </div>
 
             <div class="pages-selector-col" id="pagesSelectorWrapper">
               <span class="control-label">Pages to fetch:</span>
               <div class="pill-group" role="group" aria-label="Pages to fetch">
-                <button type="button" class="pill-btn" id="btnPages1" onclick="setPagesToFetch(1)" title="1 page = 1 credit (up to 20 businesses)">1 (quick)</button>
-                <button type="button" class="pill-btn" id="btnPages2" onclick="setPagesToFetch(2)" title="2 pages = 2 credits (up to 40 businesses)">2</button>
-                <button type="button" class="pill-btn active" id="btnPages3" onclick="setPagesToFetch(3)" title="3 pages = 3 credits (up to 60 businesses)">3 (full)</button>
+                <button type="button" class="pill-btn" id="btnPages1" onclick="setPagesToFetch(1)" title="1 page (up to 20 businesses)">1</button>
+                <button type="button" class="pill-btn" id="btnPages2" onclick="setPagesToFetch(2)" title="2 pages (up to 40 businesses)">2</button>
+                <button type="button" class="pill-btn active" id="btnPages3" onclick="setPagesToFetch(3)" title="3 pages (up to 60 businesses)">3</button>
               </div>
             </div>
 
             <button type="button" class="btn btn-subtle filter-toggle-btn" id="btnToggleFilters" onclick="toggleFiltersPanel()">
               <span id="filterToggleText">Show filters</span>
-              <span class="filter-active-indicator" id="filterIndicator">4 active</span>
+              <span class="filter-active-indicator" id="filterIndicator">Active</span>
             </button>
           </div>
 
@@ -217,7 +230,7 @@
               <!-- Filter: No website only -->
               <div class="filter-col">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="checkNoWebsite" checked>
+                  <input type="checkbox" id="checkNoWebsite">
                   <span class="checkbox-title">No website only</span>
                 </label>
                 <p class="filter-help">Only return businesses without an official website.</p>
@@ -227,9 +240,9 @@
               <div class="filter-col">
                 <label for="inputMinReviews" class="filter-label">Minimum reviews</label>
                 <div class="pill-input-row">
-                  <input type="number" id="inputMinReviews" class="input-number" min="0" max="500" value="1">
+                  <input type="number" id="inputMinReviews" class="input-number" min="0" max="500" value="0">
                   <div class="pill-group">
-                    <button type="button" class="pill-btn active" onclick="setMinReviews(1)">1+</button>
+                    <button type="button" class="pill-btn active" onclick="setMinReviews(0)">0+</button>
                     <button type="button" class="pill-btn" onclick="setMinReviews(5)">5+</button>
                     <button type="button" class="pill-btn" onclick="setMinReviews(10)">10+</button>
                     <button type="button" class="pill-btn" onclick="setMinReviews(25)">25+</button>
@@ -242,9 +255,9 @@
               <div class="filter-col">
                 <label for="selectMinRating" class="filter-label">Minimum rating</label>
                 <select id="selectMinRating" class="select-field">
-                  <option value="0">Any rating</option>
+                  <option value="0" selected>Any rating</option>
                   <option value="3.5">3.5★ and above</option>
-                  <option value="4.0" selected>4.0★ and above</option>
+                  <option value="4.0">4.0★ and above</option>
                   <option value="4.5">4.5★ and above</option>
                 </select>
                 <p class="filter-help">Focus on businesses with high customer satisfaction.</p>
@@ -253,13 +266,13 @@
               <!-- Filter: Must have phone -->
               <div class="filter-col">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="checkMustHavePhone" checked>
+                  <input type="checkbox" id="checkMustHavePhone">
                   <span class="checkbox-title">Must have phone number</span>
                 </label>
                 <p class="filter-help">Ensure contact phone is available for outreach.</p>
               </div>
 
-              <!-- Depth (only for scraper mode) -->
+              <!-- Depth (only for scraper mode, completely hidden in cloud mode) -->
               <div class="filter-col hidden" id="scraperDepthCol">
                 <label for="inputDepth" class="filter-label">Scroll depth</label>
                 <input type="number" id="inputDepth" class="input-number" min="1" max="30" value="10">
@@ -681,10 +694,30 @@
       </div>
 
       <div class="modal-body">
+        <!-- Monthly Distribution Overview for Admin -->
+        <div class="credits-stats-grid" id="adminDistributionCards" style="margin-bottom: 20px;">
+          <div class="stat-card">
+            <span class="stat-num" id="distBillingMonth">Oct 2026</span>
+            <span class="stat-label">Current Billing Month</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="distTotalAllocated">1,000</span>
+            <span class="stat-label">Total Credits Allocated</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="distTotalUsed">0</span>
+            <span class="stat-label">Credits Used This Month</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-num" id="distDaysRemaining">24 days</span>
+            <span class="stat-label">Pacing Reset In</span>
+          </div>
+        </div>
+
         <div class="users-header-row">
           <div>
-            <h4 style="font-size: 14px; font-weight: 600; color: var(--color-text-main);">User accounts</h4>
-            <p style="font-size: 12px; color: var(--color-text-muted);">Manage member access and roles.</p>
+            <h4 style="font-size: 14px; font-weight: 600; color: var(--color-text-main);">User Quotas & Token Distribution</h4>
+            <p style="font-size: 12px; color: var(--color-text-muted);">Manage team monthly credits distribution and access controls.</p>
           </div>
           <button type="button" class="btn btn-primary btn-sm" onclick="openCreateUserModal()">
             + Add user
@@ -696,10 +729,10 @@
             <thead>
               <tr>
                 <th style="width: 25%;">User</th>
-                <th style="width: 25%;">Contact</th>
-                <th style="width: 15%;">Role</th>
+                <th style="width: 25%;">Plan & Monthly Quota</th>
+                <th style="width: 20%;">Usage This Month</th>
                 <th style="width: 15%;">Status</th>
-                <th style="width: 20%; text-align: right;">Actions</th>
+                <th style="width: 15%; text-align: right;">Actions</th>
               </tr>
             </thead>
             <tbody id="usersTableBody">

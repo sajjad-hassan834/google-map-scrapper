@@ -6,6 +6,9 @@ import time
 import urllib.request
 import urllib.parse
 import urllib.error
+import logging
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 # Load .env if present before importing or reading configuration
 _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
@@ -20,8 +23,7 @@ if os.path.exists(_env_path):
     except Exception:
         pass
 
-from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Body, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Body, Request, Response, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,33 +33,23 @@ from web.config import (
     BRAND_NAME, BRAND_TAGLINE, APP_VERSION, META_DESCRIPTION,
     SOCIAL_PREVIEW_TITLE, DEFAULT_MONTHLY_LIMIT, DEFAULT_SAFETY_BUFFER
 )
-from web.users_db import (
-    init_users_db, get_user_by_id, get_user_with_hash, list_all_users,
-    create_user, update_user_profile, update_user_password, delete_user,
-    verify_password_hash
-)
-from web.auth import (
-    authenticate_user, authenticate_password, create_session_token, verify_request_auth,
-    get_client_ip, get_current_user_from_request, require_admin,
-    COOKIE_NAME, SESSION_DURATION_SECONDS
-)
-from web.crm_db import (
-    get_all_crm_leads, save_or_update_lead, import_bulk_leads,
-    update_lead_stage, update_lead_notes, delete_lead, get_crm_stats
-)
-from web.credits_db import (
-    get_credit_status, update_credit_settings, increment_credit_usage,
-    log_places_search, generate_cache_key, get_cached_search_results,
-    store_cached_search_results
-)
+from web.migrate import run_migrations
+import web.dal as dal
+from web.clerk_auth import get_current_user, require_owner, verify_clerk_token
+from web.social_finder import extract_social_links
+from web.location_helper import detect_query_region
+from web.crypto import get_masked_key_suffix
 
-# Initialize database schemas
+logger = logging.getLogger("maplead.backend")
+logging.basicConfig(level=logging.INFO)
+
+# Run database migrations on startup
 try:
-    init_users_db()
+    run_migrations()
 except Exception as _e:
-    pass
+    logger.warning(f"Startup migration check: {_e}")
 
-app = FastAPI(title=f"{BRAND_NAME} Lead Finder & CRM Engine", version=APP_VERSION)
+app = FastAPI(title=f"{BRAND_NAME} Multi-User Lead Engine", version=APP_VERSION)
 
 # CORS configured for credentials support across local, Railway, and Vercel domains
 app.add_middleware(
@@ -68,34 +60,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ----------------- Rate Limiting -----------------
+_RATE_LIMITS: Dict[str, List[float]] = {}
+
+def check_rate_limit(key: str, max_calls: int, window_seconds: int = 60):
+    """Simple in-memory sliding window rate limiter."""
+    now = time.time()
+    history = _RATE_LIMITS.setdefault(key, [])
+    # Evict calls older than window
+    _RATE_LIMITS[key] = [t for t in history if now - t < window_seconds]
+    if len(_RATE_LIMITS[key]) >= max_calls:
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down and try again shortly.")
+    _RATE_LIMITS[key].append(now)
+
 
 @app.middleware("http")
-async def enforce_auth_middleware(request: Request, call_next):
-    """Enforce session authentication on all /api/* routes except public auth & config."""
+async def rate_limiting_middleware(request: Request, call_next):
+    """Enforce rate limits per user/IP."""
     path = request.url.path
-    if not path.startswith("/api/"):
-        return await call_next(request)
-
-    # Allow CORS preflight requests
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    # Publicly accessible routes
-    public_endpoints = {
-        "/api/auth/login",
-        "/api/auth/status",
-        "/api/auth/logout",
-        "/api/config"
-    }
-    if path in public_endpoints:
-        return await call_next(request)
-
-    # Check for valid signed 7-day session cookie
-    if not verify_request_auth(request):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Authentication required. Please log in to continue."}
-        )
+    if path.startswith("/api/"):
+        ip = request.client.host if request.client else "unknown"
+        # Stricter on search and keys endpoints
+        if "/search" in path:
+            check_rate_limit(f"search:{ip}", max_calls=25, window_seconds=60)
+        elif "/keys" in path or "/delete-account" in path:
+            check_rate_limit(f"sensitive:{ip}", max_calls=15, window_seconds=60)
+        else:
+            check_rate_limit(f"general:{ip}", max_calls=120, window_seconds=60)
 
     return await call_next(request)
 
@@ -103,57 +94,33 @@ async def enforce_auth_middleware(request: Request, call_next):
 SCRAPER_BASE = os.environ.get("SCRAPER_BASE_URL", "http://localhost:8080")
 UA = "google-maps-scraper-kit/2.5"
 
-class LoginRequest(BaseModel):
-    password: str
-    identifier: Optional[str] = ""
-
-class ProfileUpdateRequest(BaseModel):
-    display_name: Optional[str] = None
-    email: Optional[str] = None
-    current_password: Optional[str] = None
-    new_password: Optional[str] = None
-
-class UserCreateRequest(BaseModel):
-    username: str
-    password: str
-    email: Optional[str] = ""
-    display_name: Optional[str] = ""
-    role: Optional[str] = "member"
-
-class UserUpdateRequest(BaseModel):
-    display_name: Optional[str] = None
-    email: Optional[str] = None
-    role: Optional[str] = None
-    status: Optional[str] = None
-    new_password: Optional[str] = None
+# ----------------- Pydantic Models -----------------
 
 class PlacesSearchRequest(BaseModel):
-    api_key: Optional[str] = ""
     query: str
-    target_lead_count: int = 5
-    no_website_only: bool = True
-    min_reviews: int = 1
+    target_lead_count: int = 20
+    no_website_only: bool = False
+    min_reviews: int = 0
     min_rating: float = 0.0
-    must_have_phone: bool = True
-    max_pages: int = 3
+    must_have_phone: bool = False
+    max_pages: int = 1
 
-class CreditSettingsUpdate(BaseModel):
-    monthly_limit: int = Field(default=1000, ge=1)
-    safety_buffer: int = Field(default=50, ge=0)
+class UserKeyRequest(BaseModel):
+    api_key: str
 
-class ScraperJobRequest(BaseModel):
-    keywords: List[str]
-    lat: str
-    lon: str
-    depth: int = 5
-    email: bool = False
-    max_time: int = 300
+class DeleteAccountRequest(BaseModel):
+    confirm_text: str
 
-class ScraperFilterRequest(BaseModel):
-    no_website_only: bool = True
-    min_reviews: int = 1
-    min_rating: float = 0.0
-    must_have_phone: bool = True
+class UserStatusUpdateRequest(BaseModel):
+    is_active: bool
+
+class UserPlanUpdateRequest(BaseModel):
+    plan_id: str
+
+class PlatformSettingsUpdate(BaseModel):
+    global_monthly_limit: Optional[int] = None
+    global_safety_buffer: Optional[int] = None
+    cache_retention_days: Optional[int] = None
 
 class LeadStageUpdate(BaseModel):
     stage: str
@@ -178,6 +145,22 @@ class CRMLeadItem(BaseModel):
     notes: Optional[str] = ""
     deal_value: Optional[float] = 1500.0
     follow_up_date: Optional[str] = ""
+    social_links: Optional[Dict[str, str]] = None
+
+class ScraperJobRequest(BaseModel):
+    keywords: List[str]
+    lat: float
+    lon: float
+    depth: int = 10
+    email: bool = False
+    max_time: int = 300
+
+class ScraperFilterRequest(BaseModel):
+    no_website_only: bool = False
+    min_reviews: int = 0
+    min_rating: float = 0.0
+    must_have_phone: bool = False
+
 
 def compute_opportunity(rating: float, reviews: int, has_website: bool) -> Dict[str, str]:
     if has_website:
@@ -211,9 +194,10 @@ def compute_opportunity(rating: float, reviews: int, has_website: bool) -> Dict[
             "reason": "No reviews on record yet."
         }
 
+
 # ----------------- Google Places API (New) -----------------
 
-def search_google_places_new(api_key: str, query: str, max_pages: int = 3):
+def search_google_places_new(api_key: str, query: str, max_pages: int = 1, region_code: Optional[str] = None):
     all_places = []
     next_page_token = None
     url = "https://places.googleapis.com/v1/places:searchText"
@@ -226,20 +210,18 @@ def search_google_places_new(api_key: str, query: str, max_pages: int = 3):
         "User-Agent": UA
     }
 
-    import time
     for page in range(max_pages):
         body: Dict[str, Any] = {
             "textQuery": query,
             "pageSize": 20
         }
+        if region_code:
+            body["regionCode"] = region_code
         if next_page_token:
             body["pageToken"] = next_page_token
 
         req_data = json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=req_data, headers=headers, method="POST")
-
-        # Increment count BEFORE/AS request is dispatched so failed requests are counted
-        increment_credit_usage(1)
         requests_sent += 1
 
         try:
@@ -262,7 +244,7 @@ def search_google_places_new(api_key: str, query: str, max_pages: int = 3):
     return all_places, requests_sent
 
 
-def format_places_new_item(item: Dict[str, Any]) -> Dict[str, Any]:
+def format_places_new_item(item: Dict[str, Any], socials_map: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     name = (item.get("displayName") or {}).get("text", "")
     address = item.get("formattedAddress", "")
     phone = item.get("nationalPhoneNumber") or item.get("internationalPhoneNumber") or ""
@@ -272,6 +254,13 @@ def format_places_new_item(item: Dict[str, Any]) -> Dict[str, Any]:
     maps_url = item.get("googleMapsUri") or ""
     category = (item.get("primaryTypeDisplayName") or {}).get("text", "")
     
+    # Check social media links if website exists (from batch map or single fallback)
+    socials = {}
+    if website:
+        if socials_map and website in socials_map:
+            socials = socials_map[website]
+        else:
+            socials = extract_social_links(website)
     opp = compute_opportunity(rating, reviews, bool(website))
 
     return {
@@ -288,356 +277,392 @@ def format_places_new_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "opportunity_tier": opp["tier"],
         "opportunity_badge": opp["badge_color"],
         "opportunity_reason": opp["reason"],
+        "social_links": socials,
         "source": "Google Places API"
     }
 
 
+# ==============================================================================
+# Public Configuration & Auth Endpoints
+# ==============================================================================
+
 @app.get("/api/config")
 def api_config():
-    """Returns central branding and metadata configuration."""
+    """Public application metadata."""
     return {
         "brand_name": BRAND_NAME,
         "brand_tagline": BRAND_TAGLINE,
         "app_version": APP_VERSION,
+        "clerk_publishable_key": os.environ.get("CLERK_PUBLISHABLE_KEY", ""),
         "meta_description": META_DESCRIPTION,
         "social_preview_title": SOCIAL_PREVIEW_TITLE,
-        "default_monthly_limit": DEFAULT_MONTHLY_LIMIT,
-        "default_safety_buffer": DEFAULT_SAFETY_BUFFER
     }
 
 
 @app.get("/api/auth/status")
 def api_auth_status(request: Request):
-    """Returns whether the current client is authenticated and user profile."""
-    is_auth = verify_request_auth(request)
-    user = get_current_user_from_request(request) if is_auth else None
-    return {
-        "authenticated": is_auth,
-        "user": user,
-        "brand_name": BRAND_NAME,
-        "brand_tagline": BRAND_TAGLINE,
-        "app_version": APP_VERSION
-    }
+    """Validates session and returns user profile & role."""
+    try:
+        user = get_current_user(request)
+        credits_status = dal.get_user_credits_status(user["id"])
+        return {
+            "authenticated": True,
+            "user": user,
+            "credits": credits_status,
+            "brand_name": BRAND_NAME
+        }
+    except HTTPException:
+        return {
+            "authenticated": False,
+            "user": None,
+            "brand_name": BRAND_NAME
+        }
+
+
+class LoginRequest(BaseModel):
+    password: str
 
 
 @app.post("/api/auth/login")
-def api_auth_login(req: LoginRequest, request: Request, response: Response):
-    """Validate master password or user account credentials and issue signed 7-day token."""
-    ip = get_client_ip(request)
-    success, msg, user = authenticate_user(password=req.password, identifier=req.identifier or "", ip=ip)
-    if not success:
-        status_code = 429 if "Too many" in msg else 401
-        raise HTTPException(status_code=status_code, detail=msg)
+def api_auth_login(payload: LoginRequest, response: Response):
+    """Master/Dev password login when Clerk is not loaded or for local access."""
+    app_pwd = os.environ.get("APP_PASSWORD", "").strip()
+    if app_pwd and payload.password != app_pwd:
+        raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
 
-    user_id = user["id"] if user else 1
-    role = user.get("role", "admin") if user else "admin"
-    token = create_session_token(user_id=user_id, role=role)
-    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    owner_email = os.environ.get("OWNER_EMAIL", "sajjad@maplead.local").strip().lower()
+    token = f"dev_user_owner:{owner_email}:Sajjad Hassan"
+    user = dal.sync_authenticated_user("dev_user_owner", owner_email, "Sajjad Hassan")
 
     response.set_cookie(
-        key=COOKIE_NAME,
+        key="__session",
         value=token,
-        max_age=SESSION_DURATION_SECONDS,
-        path="/",
+        max_age=7 * 86400,
         httponly=True,
-        samesite="none" if is_https else "lax",
-        secure=is_https
+        samesite="lax",
+        secure=False
     )
     return {
         "success": True,
         "token": token,
         "user": user,
-        "brand_name": BRAND_NAME,
-        "message": "Signed in successfully"
+        "message": "Authenticated successfully"
     }
 
 
-@app.post("/api/auth/logout")
-def api_auth_logout(response: Response):
-    """Log out by clearing the session cookie."""
-    response.delete_cookie(
-        key=COOKIE_NAME,
-        path="/",
-        httponly=True,
-        samesite="lax"
-    )
-    return {"success": True, "message": "Signed out successfully"}
+# ==============================================================================
+# User Profile, Credits & BYOK Keys
+# ==============================================================================
 
-
-# ----------------- Account & Team Management Endpoints -----------------
-
-@app.get("/api/account/me")
-def api_get_my_profile(request: Request):
-    """Get current authenticated user profile."""
-    user = get_current_user_from_request(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return user
-
-
-@app.patch("/api/account/me")
-def api_update_my_profile(req: ProfileUpdateRequest, request: Request):
-    """Update own profile display name, email, or change password."""
-    user = get_current_user_from_request(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    # If changing password, verify current password
-    if req.new_password:
-        if not req.current_password:
-            raise HTTPException(status_code=400, detail="Current password is required to change password.")
-        user_full = get_user_with_hash(user["username"])
-        valid_pwd = False
-        if user_full and verify_password_hash(req.current_password, user_full.get("password_hash", "")):
-            valid_pwd = True
-        app_pwd = os.environ.get("APP_PASSWORD", "").strip()
-        if app_pwd and req.current_password == app_pwd:
-            valid_pwd = True
-
-        if not valid_pwd:
-            raise HTTPException(status_code=400, detail="Current password is incorrect.")
-        update_user_password(user["id"], req.new_password)
-
-    updated = update_user_profile(user["id"], display_name=req.display_name, email=req.email)
-    return {"success": True, "user": updated, "message": "Profile updated successfully"}
-
-
-@app.get("/api/users")
-def api_list_users(request: Request):
-    """Manager / Admin endpoint: list all user accounts."""
-    require_admin(request)
-    return {"users": list_all_users()}
-
-
-@app.post("/api/users")
-def api_create_user(req: UserCreateRequest, request: Request):
-    """Manager / Admin endpoint: create a new user account."""
-    require_admin(request)
-    clean_user = req.username.strip()
-    if not clean_user:
-        raise HTTPException(status_code=400, detail="Username is required.")
-    if not req.password.strip():
-        raise HTTPException(status_code=400, detail="Initial password is required.")
-
-    existing = get_user_with_hash(clean_user)
-    if existing:
-        raise HTTPException(status_code=400, detail=f"Username '{clean_user}' already exists.")
-
-    new_user = create_user(
-        username=clean_user,
-        password=req.password,
-        email=req.email or "",
-        display_name=req.display_name or "",
-        role=req.role or "member"
-    )
-    return {"success": True, "user": new_user, "message": f"User '{clean_user}' created successfully"}
-
-
-@app.patch("/api/users/{user_id}")
-def api_update_user(user_id: int, req: UserUpdateRequest, request: Request):
-    """Manager / Admin endpoint: update role, status, or reset password for any user."""
-    require_admin(request)
-    target = get_user_by_id(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User account not found")
-
-    if req.new_password and req.new_password.strip():
-        update_user_password(user_id, req.new_password.strip())
-
-    updated = update_user_profile(
-        user_id,
-        display_name=req.display_name,
-        email=req.email,
-        role=req.role,
-        status=req.status
-    )
-    return {"success": True, "user": updated, "message": "User updated successfully"}
-
-
-@app.delete("/api/users/{user_id}")
-def api_delete_user(user_id: int, request: Request):
-    """Manager / Admin endpoint: delete a user account."""
-    admin = require_admin(request)
-    if admin.get("id") == user_id:
-        raise HTTPException(status_code=400, detail="You cannot delete your own active administrator account.")
-    delete_user(user_id)
-    return {"success": True, "message": "User account deleted successfully"}
-
-
-@app.get("/api/places/config")
-def api_places_config():
-    has_key = bool(os.environ.get("PLACES_API_KEY") or os.environ.get("GOOGLE_PLACES_API_KEY"))
-    return {"has_env_key": has_key}
+@app.get("/api/user/me")
+def api_user_me(user: Dict = Depends(get_current_user)):
+    """Get current user details with live credit status."""
+    credits_status = dal.get_user_credits_status(user["id"])
+    return {
+        "user": user,
+        "credits": credits_status
+    }
 
 
 @app.get("/api/credits/status")
-def api_credits_status():
-    return get_credit_status()
+def api_credits_status(user: Dict = Depends(get_current_user)):
+    """User-scoped credits status, pacing, and global safety status."""
+    return dal.get_user_credits_status(user["id"])
 
 
-@app.patch("/api/credits/settings")
-def api_credits_settings(settings: CreditSettingsUpdate):
-    return update_credit_settings(settings.monthly_limit, settings.safety_buffer)
+@app.get("/api/user/keys")
+def api_user_keys(user: Dict = Depends(get_current_user)):
+    """Check if user has configured private BYOK Google key."""
+    has_key, last_four = dal.get_user_api_key_status(user["id"])
+    return {
+        "has_own_key": has_key,
+        "last_four": last_four
+    }
 
+
+@app.post("/api/user/keys")
+def api_user_save_key(req: UserKeyRequest, request: Request, user: Dict = Depends(get_current_user)):
+    """Encrypt and store user's Google Places API key (AES-256-GCM)."""
+    clean_key = req.api_key.strip()
+    if not clean_key or len(clean_key) < 10:
+        raise HTTPException(status_code=400, detail="Invalid Google Places API key format.")
+    dal.save_user_api_key(user["id"], clean_key)
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "key_update", ip, {"key_last_four": clean_key[-4:]})
+    return {"success": True, "message": "Private API key encrypted and saved securely."}
+
+
+@app.delete("/api/user/keys")
+def api_user_delete_key(request: Request, user: Dict = Depends(get_current_user)):
+    """Remove user's stored Google key."""
+    dal.delete_user_api_key(user["id"])
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "key_delete", ip)
+    return {"success": True, "message": "Private API key removed."}
+
+
+# ==============================================================================
+# Search Endpoint (Google Places New API)
+# ==============================================================================
 
 @app.post("/api/places/search")
-def api_places_search(req: PlacesSearchRequest):
-    api_key = (req.api_key or "").strip() or os.environ.get("PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Google Places API Key is required. Please save PLACES_API_KEY in your environment.")
-    if not req.query.strip():
+def api_places_search(req: PlacesSearchRequest, request: Request, user: Dict = Depends(get_current_user)):
+    query = req.query.strip()
+    if not query:
         raise HTTPException(status_code=400, detail="Search query is required.")
 
-    # 1. Check 30-Day Result Cache
+    # 1. Determine which API Key to use (User's private key vs Platform shared key)
+    own_key = dal.get_user_decrypted_api_key(user["id"])
+    using_own_key = bool(own_key)
+    api_key = own_key or os.environ.get("PLACES_API_KEY", "").strip() or os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="No Google Places API key configured. Provide your own key in Settings.")
+
     pages_to_fetch = max(1, min(3, req.max_pages))
-    filters_dict = {
-        "no_website_only": req.no_website_only,
-        "min_reviews": req.min_reviews,
-        "min_rating": req.min_rating,
-        "must_have_phone": req.must_have_phone,
-        "max_pages": pages_to_fetch
-    }
-    cache_key = generate_cache_key(req.query, filters_dict)
-    cached_data = get_cached_search_results(cache_key)
-    if cached_data:
-        log_places_search(req.query.strip(), pages_to_fetch, credits_used=0, cached=True)
-        cached_data["from_cache"] = True
-        cached_data["credits_used"] = 0
-        cached_data["credit_status"] = get_credit_status()
-        return cached_data
+    
+    # 2. Check Credits Quota
+    credits_status = dal.get_user_credits_status(user["id"])
+    
+    if not using_own_key:
+        # Check global shared cap first
+        if credits_status["global_cap_reached"]:
+            raise HTTPException(
+                status_code=429,
+                detail="Platform shared free quota reached monthly buffer. Add your own Google Places API key in Settings to continue."
+            )
+        # Check user's own remaining credits
+        if credits_status["user_remaining"] < pages_to_fetch:
+            raise HTTPException(
+                status_code=429,
+                detail=f"You have {credits_status['user_remaining']} credits remaining this month. Upgrade plan or use your own API key."
+            )
 
-    # 2. Enforce Free Tier Credit Hard Stop
-    credit_status = get_credit_status()
-    safe_left = credit_status["safe_credits_left"]
-    if safe_left < pages_to_fetch:
-        raise HTTPException(
-            status_code=429,
-            detail="You've reached this month's free limit. Use Deep search (free, local scraper) or wait until the 1st."
-        )
+    # 3. Detect asked location / country code for biasing
+    region_code, location_asked = detect_query_region(query)
 
-    # 3. Execute Search
-    raw_places, requests_used = search_google_places_new(api_key, req.query.strip(), max_pages=pages_to_fetch)
-    log_places_search(req.query.strip(), pages_to_fetch, credits_used=requests_used, cached=False)
+    # 4. Execute Search
+    raw_places, requests_used = search_google_places_new(
+        api_key=api_key,
+        query=query,
+        max_pages=pages_to_fetch,
+        region_code=region_code
+    )
 
-    total_scanned = len(raw_places)
-    formatted = [format_places_new_item(p) for p in raw_places]
+    # Record usage and audit event
+    key_type = "own" if using_own_key else "shared"
+    dal.record_usage_event(user["id"], credits=requests_used, key_type=key_type, desc=f"Search: {query[:50]}")
+    dal.log_user_search(user["id"], query=query, pages=pages_to_fetch, credits=requests_used,
+                        key_type=key_type, total_results=len(raw_places))
+    
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "search", ip, {
+        "query": query, "pages": pages_to_fetch, "key_type": key_type, "results": len(raw_places)
+    })
 
+    # Extract website URLs for fast batch social extraction
+    from web.social_finder import batch_extract_social_links
+    from web.location_helper import matches_requested_location
+    
+    websites = [p.get("websiteUri") for p in raw_places if p.get("websiteUri")]
+    socials_map = batch_extract_social_links(websites)
+
+    # Format places and apply requested user filters
+    formatted = [format_places_new_item(p, socials_map) for p in raw_places]
     qualified = []
     excluded = []
-    
-    breakdown = {
-        "excluded_has_website": 0,
-        "excluded_low_reviews": 0,
-        "excluded_low_rating": 0,
-        "excluded_no_phone": 0
-    }
 
     for item in formatted:
         reasons = []
+        if location_asked and not matches_requested_location(item["address"], location_asked, region_code):
+            reasons.append(f"Outside requested location ({location_asked})")
         if req.no_website_only and item["has_website"]:
             reasons.append(f"Has website ({item['website']})")
-            breakdown["excluded_has_website"] += 1
-        if item["reviews"] < req.min_reviews:
-            reasons.append(f"Has {item['reviews']} reviews (minimum {req.min_reviews} required)")
-            breakdown["excluded_low_reviews"] += 1
-        if item["rating"] < req.min_rating:
-            reasons.append(f"Rating {item['rating']}★ (minimum {req.min_rating}★ required)")
-            breakdown["excluded_low_rating"] += 1
+        if req.min_reviews > 0 and item["reviews"] < req.min_reviews:
+            reasons.append(f"Has {item['reviews']} reviews (< {req.min_reviews})")
+        if req.min_rating > 0 and item["rating"] < req.min_rating:
+            reasons.append(f"Rating {item['rating']}★ (< {req.min_rating}★)")
         if req.must_have_phone and not item["phone"]:
             reasons.append("Missing phone number")
-            breakdown["excluded_no_phone"] += 1
 
         if not reasons:
             qualified.append(item)
         else:
-            excluded_item = dict(item)
-            excluded_item["exclusion_reason"] = " • ".join(reasons)
-            excluded.append(excluded_item)
+            item_copy = dict(item)
+            item_copy["exclusion_reason"] = " • ".join(reasons)
+            excluded.append(item_copy)
 
     # Sort hot leads first
     qualified.sort(key=lambda x: (x["reviews"], x["rating"]), reverse=True)
-    hot_leads_count = sum(1 for x in qualified if "HOT" in x["opportunity_tier"])
 
     explanation = (
-        f"Google returned {total_scanned} total businesses for '{req.query}'. "
-        f"{len(qualified)} matched all your filters. "
-        f"{len(excluded)} were excluded ({breakdown['excluded_has_website']} already have websites, "
-        f"{breakdown['excluded_low_reviews']} have < {req.min_reviews} reviews, "
-        f"{breakdown['excluded_no_phone']} missing phone)."
+        f"Google returned {len(raw_places)} businesses for '{query}'. "
+        f"{len(qualified)} matched filters, {len(excluded)} excluded."
     )
 
-    response_payload = {
-        "total_scanned": total_scanned,
+    return {
+        "total_scanned": len(raw_places),
         "qualified_count": len(qualified),
         "excluded_count": len(excluded),
-        "hot_leads_count": hot_leads_count,
         "results": qualified,
         "excluded_results": excluded,
-        "filtering_breakdown": breakdown,
         "explanation": explanation,
-        "from_cache": False,
         "credits_used": requests_used,
-        "credit_status": get_credit_status()
+        "credit_status": dal.get_user_credits_status(user["id"])
     }
 
-    # 4. Store in 30-Day Cache
-    store_cached_search_results(cache_key, req.query.strip(), response_payload)
-    return response_payload
 
-
-# ----------------- CRM Endpoints -----------------
+# ==============================================================================
+# CRM Endpoints (Strictly User Scoped)
+# ==============================================================================
 
 @app.get("/api/crm/leads")
-def api_crm_list():
-    return {"leads": get_all_crm_leads(), "stats": get_crm_stats()}
+def api_crm_list(user: Dict = Depends(get_current_user)):
+    """List CRM leads strictly owned by the current user."""
+    leads = dal.get_user_leads(user["id"])
+    return {
+        "leads": leads,
+        "stats": {
+            "total": len(leads),
+            "contacted": sum(1 for l in leads if l.get("stage") == "Contacted"),
+            "won": sum(1 for l in leads if l.get("stage") == "Closed Won")
+        }
+    }
 
 
 @app.post("/api/crm/leads")
-def api_crm_save_lead(lead: CRMLeadItem):
-    saved = save_or_update_lead(lead.dict())
-    return {"status": "success", "lead": saved, "stats": get_crm_stats()}
-
-
-@app.post("/api/crm/import")
-def api_crm_import(leads: List[CRMLeadItem]):
-    data = [l.dict() for l in leads]
-    count = import_bulk_leads(data)
-    return {"status": "success", "imported_count": count, "stats": get_crm_stats()}
+def api_crm_save_lead(lead: CRMLeadItem, user: Dict = Depends(get_current_user)):
+    """Save or update a lead in the user's CRM."""
+    saved = dal.save_user_lead(user["id"], lead.dict())
+    return {"status": "success", "lead": saved}
 
 
 @app.patch("/api/crm/leads/{lead_id}/stage")
-def api_crm_update_stage(lead_id: str, payload: LeadStageUpdate):
-    ok = update_lead_stage(lead_id, payload.stage)
+def api_crm_update_stage(lead_id: str, payload: LeadStageUpdate, user: Dict = Depends(get_current_user)):
+    ok = dal.update_lead_stage(user["id"], lead_id, payload.stage)
     if not ok:
         raise HTTPException(status_code=404, detail="Lead not found")
-    return {"status": "success", "lead_id": lead_id, "stage": payload.stage, "stats": get_crm_stats()}
+    return {"status": "success", "lead_id": lead_id, "stage": payload.stage}
 
 
 @app.patch("/api/crm/leads/{lead_id}/notes")
-def api_crm_update_notes(lead_id: str, payload: LeadNotesUpdate):
-    ok = update_lead_notes(lead_id, payload.notes, payload.follow_up_date)
+def api_crm_update_notes(lead_id: str, payload: LeadNotesUpdate, user: Dict = Depends(get_current_user)):
+    ok = dal.update_lead_notes(user["id"], lead_id, payload.notes, payload.follow_up_date or "")
     if not ok:
         raise HTTPException(status_code=404, detail="Lead not found")
     return {"status": "success", "lead_id": lead_id, "notes": payload.notes}
 
 
 @app.delete("/api/crm/leads/{lead_id}")
-def api_crm_delete(lead_id: str):
-    ok = delete_lead(lead_id)
+def api_crm_delete(lead_id: str, user: Dict = Depends(get_current_user)):
+    ok = dal.delete_user_lead(user["id"], lead_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Lead not found")
-    return {"status": "success", "deleted": lead_id, "stats": get_crm_stats()}
+    return {"status": "success", "deleted": lead_id}
 
 
-@app.get("/api/crm/stats")
-def api_crm_get_stats():
-    return get_crm_stats()
+# ==============================================================================
+# Data Export & Account Deletion
+# ==============================================================================
+
+@app.get("/api/user/export")
+def api_user_export_json(request: Request, user: Dict = Depends(get_current_user)):
+    """Export complete user data package (GDPR/CCPA)."""
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "export_json", ip)
+    data = dal.export_user_data(user["id"])
+    return data
 
 
-# ----------------- Local Scraper Integration (gosom) -----------------
+@app.get("/api/user/export/csv")
+def api_user_export_csv(request: Request, user: Dict = Depends(get_current_user)):
+    """Export all user leads to CSV."""
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "export_csv", ip)
+    leads = dal.get_user_leads(user["id"])
+    
+    fieldnames = [
+        "name", "phone", "rating", "reviews", "opportunity_tier", "category",
+        "address", "website", "stage", "deal_value", "notes", "google_maps_url"
+    ]
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for item in leads:
+        writer.writerow(item)
+
+    csv_bytes = output.getvalue().encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="my_leads.csv"'}
+    )
+
+
+@app.post("/api/user/delete-account")
+def api_user_delete_account(req: DeleteAccountRequest, request: Request, user: Dict = Depends(get_current_user)):
+    """Permanently delete user account and all owned rows."""
+    if req.confirm_text.strip() != "DELETE":
+        raise HTTPException(status_code=400, detail="Type 'DELETE' in uppercase to confirm account deletion.")
+    
+    ip = request.client.host if request.client else ""
+    dal.log_audit_event(user["id"], "account_delete", ip)
+    dal.delete_user_account(user["id"])
+    return {"success": True, "message": "Account and all associated data permanently deleted."}
+
+
+# ==============================================================================
+# Owner-Only Admin Management Endpoints
+# ==============================================================================
+
+@app.get("/api/admin/users")
+def api_admin_list_users(owner: Dict = Depends(require_owner)):
+    """List all platform users with plan, credits, and active status."""
+    return {"users": dal.list_users_for_admin(owner["id"])}
+
+
+@app.get("/api/users")
+def api_users_alias(user: Dict = Depends(get_current_user)):
+    """User team list for UI modal (Owner sees full admin controls, Member sees team list)."""
+    if user["role"] == "owner":
+        return {"users": dal.list_users_for_admin(user["id"])}
+    return {"users": [{"id": user["id"], "username": user.get("display_name") or user["email"], "role": user["role"], "status": "active"}]}
+
+
+@app.get("/api/admin/distribution")
+def api_admin_distribution(owner: Dict = Depends(require_owner)):
+    """Owner monthly credits distribution, active quotas, and pacing metrics."""
+    return dal.get_monthly_distribution(owner["id"])
+
+
+@app.patch("/api/admin/users/{user_id}/status")
+def api_admin_toggle_user_status(user_id: str, payload: UserStatusUpdateRequest, owner: Dict = Depends(require_owner)):
+    """Deactivate or activate user account."""
+    ok = dal.set_user_active_status(owner["id"], user_id, payload.is_active)
+    return {"success": ok}
+
+
+@app.patch("/api/admin/users/{user_id}/plan")
+def api_admin_update_user_plan(user_id: str, payload: UserPlanUpdateRequest, owner: Dict = Depends(require_owner)):
+    """Change user subscription plan tier."""
+    ok = dal.update_user_plan(owner["id"], user_id, payload.plan_id)
+    return {"success": ok}
+
+
+@app.get("/api/admin/audit-logs")
+def api_admin_audit_logs(owner: Dict = Depends(require_owner)):
+    """Inspect recent platform security audit records."""
+    return {"logs": dal.get_recent_audit_logs(owner["id"])}
+
+
+# ==============================================================================
+# Local Scraper Integration (Locked down to Owner only)
+# ==============================================================================
 
 @app.get("/api/scraper/health")
-def api_scraper_health():
+def api_scraper_health(user: Dict = Depends(get_current_user)):
+    if user.get("role") != "owner":
+        return {"status": "hidden"}
     try:
         req = urllib.request.Request(f"{SCRAPER_BASE}/api/v1/jobs", headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -648,7 +673,8 @@ def api_scraper_health():
 
 
 @app.post("/api/scraper/start")
-def api_scraper_start(req: ScraperJobRequest):
+def api_scraper_start(req: ScraperJobRequest, owner: Dict = Depends(require_owner)):
+    """Local scraper execution: Owner Only."""
     body = {
         "name": "web-lead-job",
         "keywords": req.keywords,
@@ -681,7 +707,7 @@ def api_scraper_start(req: ScraperJobRequest):
 
 
 @app.get("/api/scraper/status/{job_id}")
-def api_scraper_status(job_id: str):
+def api_scraper_status(job_id: str, owner: Dict = Depends(require_owner)):
     try:
         req = urllib.request.Request(f"{SCRAPER_BASE}/api/v1/jobs/{job_id}", headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -692,7 +718,7 @@ def api_scraper_status(job_id: str):
 
 
 @app.post("/api/scraper/results/{job_id}")
-def api_scraper_results(job_id: str, filters: ScraperFilterRequest):
+def api_scraper_results(job_id: str, filters: ScraperFilterRequest, owner: Dict = Depends(require_owner)):
     try:
         req = urllib.request.Request(f"{SCRAPER_BASE}/api/v1/jobs/{job_id}/download", headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -702,125 +728,41 @@ def api_scraper_results(job_id: str, filters: ScraperFilterRequest):
 
     reader = csv.DictReader(io.StringIO(raw_csv))
     rows = list(reader)
-    total_scanned = len(rows)
-
-    qualified = []
-    excluded = []
-    breakdown = {
-        "excluded_has_website": 0,
-        "excluded_low_reviews": 0,
-        "excluded_low_rating": 0,
-        "excluded_no_phone": 0
-    }
-
+    formatted = []
     for r in rows:
         name = r.get("title", "").strip()
-        website = r.get("website", "").strip()
         phone = r.get("phone", "").strip()
+        website = r.get("website", "").strip()
+        rating = float(r.get("review_rating") or 0.0) if r.get("review_rating") else 0.0
+        reviews = int(float(r.get("review_count") or 0)) if r.get("review_count") else 0
+        opp = compute_opportunity(rating, reviews, bool(website))
+        socials = extract_social_links(website) if website else {}
         
-        try:
-            reviews = int(float(r.get("review_count") or 0))
-        except (ValueError, TypeError):
-            reviews = 0
-            
-        try:
-            rating = float(r.get("review_rating") or 0.0)
-        except (ValueError, TypeError):
-            rating = 0.0
-
-        has_site = bool(website)
-        reasons = []
-
-        if filters.no_website_only and has_site:
-            reasons.append(f"Has website ({website})")
-            breakdown["excluded_has_website"] += 1
-        if reviews < filters.min_reviews:
-            reasons.append(f"Has {reviews} reviews (minimum {filters.min_reviews} required)")
-            breakdown["excluded_low_reviews"] += 1
-        if rating < filters.min_rating:
-            reasons.append(f"Rating {rating}★ (minimum {filters.min_rating}★ required)")
-            breakdown["excluded_low_rating"] += 1
-        if filters.must_have_phone and not phone:
-            reasons.append("Missing phone number")
-            breakdown["excluded_no_phone"] += 1
-
-        opp = compute_opportunity(rating, reviews, has_site)
-
-        item = {
-            "id": r.get("place_id") or r.get("cid") or (name + "_" + phone),
+        formatted.append({
+            "id": r.get("place_id") or (name + "_" + phone),
             "name": name,
             "phone": phone,
             "website": website,
-            "has_website": has_site,
+            "has_website": bool(website),
             "rating": rating,
             "reviews": reviews,
-            "address": r.get("address", "") or r.get("complete_address", ""),
+            "address": r.get("address", ""),
             "category": r.get("category", ""),
             "google_maps_url": r.get("link", ""),
-            "emails": r.get("emails", ""),
             "opportunity_tier": opp["tier"],
             "opportunity_badge": opp["badge_color"],
             "opportunity_reason": opp["reason"],
+            "social_links": socials,
             "source": "Local Scraper (Docker)"
-        }
-
-        if not reasons:
-            qualified.append(item)
-        else:
-            item["exclusion_reason"] = " • ".join(reasons)
-            excluded.append(item)
-
-    qualified.sort(key=lambda x: (x["reviews"], x["rating"]), reverse=True)
-    hot_leads_count = sum(1 for x in qualified if "HOT" in x["opportunity_tier"])
+        })
 
     return {
-        "total_scanned": total_scanned,
-        "qualified_count": len(qualified),
-        "excluded_count": len(excluded),
-        "hot_leads_count": hot_leads_count,
-        "results": qualified,
-        "excluded_results": excluded,
-        "filtering_breakdown": breakdown,
-        "explanation": f"Scraped {total_scanned} listings. {len(qualified)} matched all filters, {len(excluded)} excluded."
+        "total_scanned": len(rows),
+        "results": formatted
     }
 
 
-@app.get("/api/geocode")
-def api_geocode(place: str = Query(...)):
-    q = urllib.parse.urlencode({"format": "json", "limit": 1, "q": place})
-    url = f"https://nominatim.openstreetmap.org/search?{q}"
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            hits = json.loads(resp.read().decode("utf-8"))
-            if hits:
-                return {"lat": str(hits[0]["lat"]), "lon": str(hits[0]["lon"]), "display_name": hits[0].get("display_name")}
-            raise HTTPException(status_code=404, detail="Location not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/export/csv")
-def api_export_csv(leads: List[Dict[str, Any]] = Body(...)):
-    fieldnames = [
-        "name", "phone", "rating", "reviews", "opportunity_tier", "category",
-        "address", "website", "stage", "deal_value", "notes", "google_maps_url", "opportunity_reason"
-    ]
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
-    writer.writeheader()
-    for item in leads:
-        writer.writerow(item)
-    
-    csv_bytes = output.getvalue().encode("utf-8")
-    return StreamingResponse(
-        io.BytesIO(csv_bytes),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="leads_crm_pipeline.csv"'}
-    )
-
+# Static assets
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
