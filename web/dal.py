@@ -101,7 +101,7 @@ def sync_authenticated_user(provider_user_id: str, email: str, display_name: Opt
             name = display_name or clean_email.split("@")[0].capitalize()
             _execute(conn, """
             INSERT INTO users (id, email, display_name, role, plan_id, is_active, created_at, last_active_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)
             """, (provider_user_id, clean_email, name, assigned_role, assigned_plan, now_iso, now_iso))
             conn.commit()
             
@@ -135,7 +135,7 @@ def claim_legacy_data_for_owner(owner_user_id: str):
                 ON CONFLICT (id, user_id) DO NOTHING
                 """, (
                     lead_id, owner_user_id, d.get("name", ""), d.get("phone", ""), d.get("website", ""),
-                    1 if d.get("has_website") else 0, float(d.get("rating") or 0.0), int(d.get("reviews") or 0),
+                    bool(d.get("has_website")), float(d.get("rating") or 0.0), int(d.get("reviews") or 0),
                     d.get("address", ""), d.get("category", ""), d.get("google_maps_url", ""),
                     d.get("opportunity_tier", "STANDARD"), d.get("stage", "New Lead"), d.get("notes", ""),
                     float(d.get("deal_value") or 1500.0), d.get("follow_up_date", ""),
@@ -187,7 +187,7 @@ def set_user_active_status(requesting_user_id: str, target_user_id: str, is_acti
         
     conn = get_db()
     try:
-        _execute(conn, "UPDATE users SET is_active = ? WHERE id = ?", (1 if is_active else 0, target_user_id))
+        _execute(conn, "UPDATE users SET is_active = ? WHERE id = ?", (bool(is_active), target_user_id))
         conn.commit()
         return True
     finally:
@@ -259,7 +259,7 @@ def save_user_lead(user_id: str, lead_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         _execute(conn, sql, (
             lead_id, user_id, lead_data.get("name", ""), lead_data.get("phone", ""),
-            lead_data.get("website", ""), 1 if lead_data.get("has_website") else 0,
+            lead_data.get("website", ""), bool(lead_data.get("has_website")),
             float(lead_data.get("rating") or 0.0), int(lead_data.get("reviews") or 0),
             lead_data.get("address", ""), lead_data.get("category", ""),
             lead_data.get("google_maps_url", ""), lead_data.get("opportunity_tier", "STANDARD"),
@@ -483,7 +483,7 @@ def log_user_search(user_id: str, query: str, pages: int, credits: int,
         _execute(conn, """
         INSERT INTO searches (user_id, query, pages_requested, credits_used, key_type, cached, total_results, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, query, pages, credits, key_type, 1 if cached else 0, total_results, now_iso))
+        """, (user_id, query, pages, credits, key_type, bool(cached), total_results, now_iso))
         conn.commit()
     finally:
         conn.close()
@@ -522,11 +522,11 @@ def save_user_api_key(user_id: str, plain_key: str):
     try:
         _execute(conn, """
         INSERT INTO api_keys (user_id, encrypted_key, key_last_four, is_valid, created_at, updated_at)
-        VALUES (?, ?, ?, 1, ?, ?)
+        VALUES (?, ?, ?, TRUE, ?, ?)
         ON CONFLICT (user_id) DO UPDATE SET
             encrypted_key = EXCLUDED.encrypted_key,
             key_last_four = EXCLUDED.key_last_four,
-            is_valid = 1,
+            is_valid = TRUE,
             updated_at = EXCLUDED.updated_at
         """, (user_id, encrypted, last_four, now_iso, now_iso))
         conn.commit()
