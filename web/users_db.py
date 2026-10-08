@@ -87,11 +87,8 @@ def init_users_db():
     conn.close()
 
 
-# Ensure table is initialized on import
-try:
-    init_users_db()
-except Exception:
-    pass
+# Note: User schema is now managed by web.migrate and migrations/
+# init_users_db is deprecated and should not run automatically on import.
 
 
 # ----------------- User Queries & Operations -----------------

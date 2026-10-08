@@ -106,11 +106,99 @@ def apply_migration_file(conn, file_path: str, version: str):
     logger.info(f"Successfully applied migration: {version}")
 
 
+def preflight_align_schema(conn):
+    """Ensure existing tables are aligned for migrations in PostgreSQL & SQLite."""
+    if IS_POSTGRES:
+        with conn.cursor() as cursor:
+            # 1. Align legacy users table if it exists with integer id
+            cursor.execute("""
+                SELECT data_type 
+                FROM information_schema.columns 
+                WHERE table_name = 'users' AND column_name = 'id'
+            """)
+            row = cursor.fetchone()
+            if row:
+                dt = row["data_type"] if isinstance(row, dict) else row[0]
+                if dt.lower() in ("integer", "smallint", "bigint", "serial"):
+                    logger.info(f"Preflight: Migrating users.id from {dt} to VARCHAR(64)...")
+                    cursor.execute("""
+                        ALTER TABLE users ALTER COLUMN id DROP DEFAULT;
+                        ALTER TABLE users ALTER COLUMN id TYPE VARCHAR(64) USING id::VARCHAR(64);
+                    """)
+
+            # 2. Ensure plans table exists with seeds before users references it
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS plans (
+                    id VARCHAR(32) PRIMARY KEY,
+                    name VARCHAR(64) NOT NULL,
+                    monthly_searches INTEGER NOT NULL,
+                    can_use_deep_search BOOLEAN DEFAULT FALSE,
+                    can_use_own_key BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO plans (id, name, monthly_searches, can_use_deep_search, can_use_own_key)
+                VALUES 
+                    ('free', 'Free', 10, FALSE, TRUE),
+                    ('pro', 'Pro', 100, FALSE, TRUE),
+                    ('owner', 'Owner', 999999, TRUE, TRUE)
+                ON CONFLICT (id) DO NOTHING;
+            """)
+
+            # 3. If users table already exists, ensure all required columns exist
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'users') THEN
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='plan_id') THEN
+                            ALTER TABLE users ADD COLUMN plan_id VARCHAR(32) DEFAULT 'free' REFERENCES plans(id);
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='role') THEN
+                            ALTER TABLE users ADD COLUMN role VARCHAR(32) DEFAULT 'member';
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_active') THEN
+                            ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='custom_monthly_limit') THEN
+                            ALTER TABLE users ADD COLUMN custom_monthly_limit INTEGER;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='last_active_at') THEN
+                            ALTER TABLE users ADD COLUMN last_active_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='display_name') THEN
+                            ALTER TABLE users ADD COLUMN display_name VARCHAR(255);
+                        END IF;
+                    END IF;
+                END $$;
+            """)
+        conn.commit()
+    else:
+        # SQLite preflight
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(users)")
+            existing_cols = {r[1] for r in cursor.fetchall()}
+            if "plan_id" not in existing_cols:
+                try: cursor.execute("ALTER TABLE users ADD COLUMN plan_id TEXT DEFAULT 'free'")
+                except Exception: pass
+            if "is_active" not in existing_cols:
+                try: cursor.execute("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1")
+                except Exception: pass
+            if "last_active_at" not in existing_cols:
+                try: cursor.execute("ALTER TABLE users ADD COLUMN last_active_at TEXT DEFAULT CURRENT_TIMESTAMP")
+                except Exception: pass
+            if "custom_monthly_limit" not in existing_cols:
+                try: cursor.execute("ALTER TABLE users ADD COLUMN custom_monthly_limit INTEGER")
+                except Exception: pass
+            conn.commit()
+
+
 def run_migrations():
     """Apply all pending migrations in sorted order."""
     conn = get_db()
     try:
         init_migration_table(conn)
+        preflight_align_schema(conn)
         applied = get_applied_migrations(conn)
         
         migration_files = sorted(glob.glob(os.path.join(MIGRATIONS_DIR, "*.sql")))

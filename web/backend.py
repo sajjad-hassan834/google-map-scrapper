@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO)
 try:
     run_migrations()
 except Exception as _e:
-    logger.warning(f"Startup migration check: {_e}")
+    logger.error(f"Startup migration check failed: {_e}", exc_info=True)
 
 app = FastAPI(title=f"{BRAND_NAME} Multi-User Lead Engine", version=APP_VERSION)
 

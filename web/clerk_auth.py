@@ -55,10 +55,14 @@ def _fetch_clerk_jwks() -> list:
         if not jwks_url:
             jwks_url = "https://api.clerk.com/v1/jwks"
 
-    req = urllib.request.Request(
-        jwks_url,
-        headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"} if CLERK_SECRET_KEY else {}
-    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MapLead-Backend/2.0",
+        "Accept": "application/json"
+    }
+    if CLERK_SECRET_KEY:
+        headers["Authorization"] = f"Bearer {CLERK_SECRET_KEY}"
+
+    req = urllib.request.Request(jwks_url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
@@ -67,7 +71,7 @@ def _fetch_clerk_jwks() -> list:
             _JWKS_CACHE["expires_at"] = now + 3600  # Cache for 1 hour
             return keys
     except Exception as e:
-        logger.warning(f"Could not retrieve Clerk JWKS: {e}")
+        logger.debug(f"Could not retrieve Clerk JWKS: {e}")
         return []
 
 
