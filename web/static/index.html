@@ -80,17 +80,6 @@
         </div>
 
         <div class="topbar-right">
-          <!-- Fast search credits meter -->
-          <button type="button" class="credits-meter-btn" id="creditsMeterBtn" onclick="openCreditsModal()" title="Fast search free tier meter (click for usage & settings)">
-            <div class="meter-text-row">
-              <span class="meter-title" id="meterMainText">Fast search: 1,000 of 1,000 left</span>
-            </div>
-            <div class="meter-bar-track">
-              <div class="meter-bar-fill" id="meterBarFill" style="width: 100%;"></div>
-            </div>
-            <div class="meter-sub-row" id="meterSubText">Resets in 24 days · about 39 per day</div>
-          </button>
-
           <div class="system-status" id="systemStatus">
             <span class="status-dot"></span>
             <span class="status-label">API connected · Scraper online</span>
@@ -112,9 +101,21 @@
             </button>
             <div class="user-menu-dropdown hidden" id="userMenuDropdown" role="menu" aria-orientation="vertical">
               <div class="user-menu-header">
-                <div class="user-menu-brand" id="userMenuBrandTitle">MapLead</div>
-                <div class="user-menu-status">Signed in session</div>
+                <div class="user-menu-brand" id="userMenuBrandTitle">Manager / Super Admin</div>
+                <div class="user-menu-status" id="userMenuRoleTag">Admin · Full access</div>
               </div>
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openAccountModal('profile')">
+                <span class="menu-icon">👤</span>
+                <span>My account</span>
+              </button>
+              <button type="button" class="user-menu-item" id="menuItemTeam" role="menuitem" onclick="openAccountModal('team')">
+                <span class="menu-icon">👥</span>
+                <span>Team & users</span>
+              </button>
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openCreditsModal()">
+                <span class="menu-icon">⚡</span>
+                <span>Credits and usage</span>
+              </button>
               <button type="button" class="user-menu-item" role="menuitem" onclick="openSettingsModal()">
                 <span class="menu-icon">⚙️</span>
                 <span>Settings</span>
@@ -122,10 +123,6 @@
               <button type="button" class="user-menu-item" role="menuitem" onclick="openHelpModal()">
                 <span class="menu-icon">📖</span>
                 <span>Help and guide</span>
-              </button>
-              <button type="button" class="user-menu-item" role="menuitem" onclick="openCreditsModal()">
-                <span class="menu-icon">⚡</span>
-                <span>Credits and usage</span>
               </button>
               <div class="user-menu-divider" role="separator"></div>
               <button type="button" class="user-menu-item logout" role="menuitem" onclick="handleLogout()">
@@ -626,6 +623,157 @@
           Close
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Account & Team Management Modal -->
+  <div class="modal-overlay hidden" id="accountModal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" id="accountModalTitle">Account & team management</h3>
+          <p class="modal-subtitle">Manage your profile, team members, and role permissions.</p>
+        </div>
+        <button type="button" class="btn-close" onclick="closeAccountModal()" aria-label="Close account modal">✕</button>
+      </div>
+
+      <!-- Segmented Tabs -->
+      <div class="account-nav-tabs">
+        <button type="button" class="account-tab-btn active" id="accountTabBtnProfile" onclick="switchAccountTab('profile')">
+          👤 My profile
+        </button>
+        <button type="button" class="account-tab-btn" id="accountTabBtnTeam" onclick="switchAccountTab('team')">
+          👥 Team & users (Manager level)
+        </button>
+      </div>
+
+      <!-- Tab 1: Profile -->
+      <div class="account-tab-content" id="accountContentProfile">
+        <form onsubmit="handleProfileFormSubmit(event)">
+          <h4 class="settings-section-title">Personal information</h4>
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label for="profUsername">Username</label>
+              <input type="text" id="profUsername" class="input-field-sm" readonly disabled style="opacity: 0.7;">
+              <span class="field-hint">Unique account username identifier.</span>
+            </div>
+            <div class="settings-field">
+              <label for="profRole">Role level</label>
+              <div style="margin-top: 6px;">
+                <span class="role-badge admin" id="profRoleBadge">Manager / Admin</span>
+              </div>
+              <span class="field-hint">Your account permission tier.</span>
+            </div>
+            <div class="settings-field">
+              <label for="profDisplayName">Display name</label>
+              <input type="text" id="profDisplayName" class="input-field-sm" placeholder="e.g. Sajjad Hassan">
+            </div>
+            <div class="settings-field">
+              <label for="profEmail">Email address</label>
+              <input type="email" id="profEmail" class="input-field-sm" placeholder="e.g. sajjad@example.com">
+            </div>
+          </div>
+          <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
+            <button type="submit" class="btn btn-secondary btn-sm" id="btnSaveProfile">Save profile details</button>
+          </div>
+        </form>
+
+        <form onsubmit="handlePasswordChangeSubmit(event)" style="margin-top: 24px; border-top: 1px solid var(--color-border-subtle); padding-top: 18px;">
+          <h4 class="settings-section-title">Security & password</h4>
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label for="pwdCurrent">Current password</label>
+              <input type="password" id="pwdCurrent" class="input-field-sm" required autocomplete="current-password" placeholder="Enter current password">
+            </div>
+            <div class="settings-field">
+              <label for="pwdNew">New password</label>
+              <input type="password" id="pwdNew" class="input-field-sm" required autocomplete="new-password" placeholder="Enter new password">
+            </div>
+          </div>
+          <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
+            <button type="submit" class="btn btn-primary btn-sm" id="btnChangePassword">Change password</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Tab 2: Team & Users (Manager Level) -->
+      <div class="account-tab-content hidden" id="accountContentTeam">
+        <div class="users-header-row">
+          <div>
+            <h4 style="font-size: 14px; font-weight: 600; color: var(--color-text-main);">User accounts & permissions</h4>
+            <p style="font-size: 12px; color: var(--color-text-muted);">As a Manager / Admin, you have access to create, update, and manage all accounts.</p>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" onclick="openCreateUserModal()">
+            + Add new user
+          </button>
+        </div>
+
+        <div class="table-wrapper modal-table-wrapper" style="max-height: 380px;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 25%;">User</th>
+                <th style="width: 25%;">Display name / Email</th>
+                <th style="width: 15%;">Role</th>
+                <th style="width: 15%;">Status</th>
+                <th style="width: 20%; text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeAccountModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / Edit User Sub-Modal -->
+  <div class="modal-overlay hidden" id="userEditModal" role="dialog" aria-modal="true" aria-labelledby="userEditModalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="userEditModalTitle">Add new user</h3>
+        <button type="button" class="btn-close" onclick="closeUserEditModal()" aria-label="Close user editor">✕</button>
+      </div>
+      <form onsubmit="handleUserFormSubmit(event)">
+        <div class="modal-body">
+          <input type="hidden" id="editUserId" value="">
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label for="editUsername">Username</label>
+              <input type="text" id="editUsername" class="input-field-sm" required placeholder="e.g. team_member">
+            </div>
+            <div class="settings-field">
+              <label for="editRole">Role</label>
+              <select id="editRole" class="select-field">
+                <option value="member">Standard Member</option>
+                <option value="admin">Manager / Administrator</option>
+              </select>
+            </div>
+            <div class="settings-field">
+              <label for="editDisplayName">Display name</label>
+              <input type="text" id="editDisplayName" class="input-field-sm" placeholder="e.g. John Doe">
+            </div>
+            <div class="settings-field">
+              <label for="editEmail">Email (optional)</label>
+              <input type="email" id="editEmail" class="input-field-sm" placeholder="e.g. john@example.com">
+            </div>
+            <div class="settings-field full-width">
+              <label for="editPassword" id="editPasswordLabel">Initial password</label>
+              <input type="password" id="editPassword" class="input-field-sm" placeholder="Set user password">
+              <span class="field-hint" id="editPasswordHint">Provide a strong password for this user.</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeUserEditModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm" id="btnSaveUser">Save user</button>
+        </div>
+      </form>
     </div>
   </div>
 

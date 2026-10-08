@@ -31,9 +31,15 @@ from web.config import (
     BRAND_NAME, BRAND_TAGLINE, APP_VERSION, META_DESCRIPTION,
     SOCIAL_PREVIEW_TITLE, DEFAULT_MONTHLY_LIMIT, DEFAULT_SAFETY_BUFFER
 )
+from web.users_db import (
+    init_users_db, get_user_by_id, get_user_with_hash, list_all_users,
+    create_user, update_user_profile, update_user_password, delete_user,
+    verify_password_hash
+)
 from web.auth import (
-    authenticate_password, create_session_token, verify_request_auth,
-    get_client_ip, COOKIE_NAME, SESSION_DURATION_SECONDS
+    authenticate_user, authenticate_password, create_session_token, verify_request_auth,
+    get_client_ip, get_current_user_from_request, require_admin,
+    COOKIE_NAME, SESSION_DURATION_SECONDS
 )
 from web.crm_db import (
     get_all_crm_leads, save_or_update_lead, import_bulk_leads,
@@ -44,6 +50,12 @@ from web.credits_db import (
     log_places_search, generate_cache_key, get_cached_search_results,
     store_cached_search_results
 )
+
+# Initialize database schemas
+try:
+    init_users_db()
+except Exception as _e:
+    pass
 
 app = FastAPI(title=f"{BRAND_NAME} Lead Finder & CRM Engine", version=APP_VERSION)
 
@@ -93,6 +105,27 @@ UA = "google-maps-scraper-kit/2.5"
 
 class LoginRequest(BaseModel):
     password: str
+    identifier: Optional[str] = ""
+
+class ProfileUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = ""
+    display_name: Optional[str] = ""
+    role: Optional[str] = "member"
+
+class UserUpdateRequest(BaseModel):
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
+    new_password: Optional[str] = None
 
 class PlacesSearchRequest(BaseModel):
     api_key: Optional[str] = ""
@@ -275,10 +308,12 @@ def api_config():
 
 @app.get("/api/auth/status")
 def api_auth_status(request: Request):
-    """Returns whether the current client is authenticated."""
+    """Returns whether the current client is authenticated and user profile."""
     is_auth = verify_request_auth(request)
+    user = get_current_user_from_request(request) if is_auth else None
     return {
         "authenticated": is_auth,
+        "user": user,
         "brand_name": BRAND_NAME,
         "brand_tagline": BRAND_TAGLINE,
         "app_version": APP_VERSION
@@ -287,14 +322,16 @@ def api_auth_status(request: Request):
 
 @app.post("/api/auth/login")
 def api_auth_login(req: LoginRequest, request: Request, response: Response):
-    """Validate password and issue signed 7-day session cookie."""
+    """Validate master password or user account credentials and issue signed 7-day token."""
     ip = get_client_ip(request)
-    success, msg = authenticate_password(req.password, ip)
+    success, msg, user = authenticate_user(password=req.password, identifier=req.identifier or "", ip=ip)
     if not success:
         status_code = 429 if "Too many" in msg else 401
         raise HTTPException(status_code=status_code, detail=msg)
 
-    token = create_session_token()
+    user_id = user["id"] if user else 1
+    role = user.get("role", "admin") if user else "admin"
+    token = create_session_token(user_id=user_id, role=role)
     is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
 
     response.set_cookie(
@@ -309,6 +346,7 @@ def api_auth_login(req: LoginRequest, request: Request, response: Response):
     return {
         "success": True,
         "token": token,
+        "user": user,
         "brand_name": BRAND_NAME,
         "message": "Signed in successfully"
     }
@@ -324,6 +362,106 @@ def api_auth_logout(response: Response):
         samesite="lax"
     )
     return {"success": True, "message": "Signed out successfully"}
+
+
+# ----------------- Account & Team Management Endpoints -----------------
+
+@app.get("/api/account/me")
+def api_get_my_profile(request: Request):
+    """Get current authenticated user profile."""
+    user = get_current_user_from_request(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+@app.patch("/api/account/me")
+def api_update_my_profile(req: ProfileUpdateRequest, request: Request):
+    """Update own profile display name, email, or change password."""
+    user = get_current_user_from_request(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # If changing password, verify current password
+    if req.new_password:
+        if not req.current_password:
+            raise HTTPException(status_code=400, detail="Current password is required to change password.")
+        user_full = get_user_with_hash(user["username"])
+        valid_pwd = False
+        if user_full and verify_password_hash(req.current_password, user_full.get("password_hash", "")):
+            valid_pwd = True
+        app_pwd = os.environ.get("APP_PASSWORD", "").strip()
+        if app_pwd and req.current_password == app_pwd:
+            valid_pwd = True
+
+        if not valid_pwd:
+            raise HTTPException(status_code=400, detail="Current password is incorrect.")
+        update_user_password(user["id"], req.new_password)
+
+    updated = update_user_profile(user["id"], display_name=req.display_name, email=req.email)
+    return {"success": True, "user": updated, "message": "Profile updated successfully"}
+
+
+@app.get("/api/users")
+def api_list_users(request: Request):
+    """Manager / Admin endpoint: list all user accounts."""
+    require_admin(request)
+    return {"users": list_all_users()}
+
+
+@app.post("/api/users")
+def api_create_user(req: UserCreateRequest, request: Request):
+    """Manager / Admin endpoint: create a new user account."""
+    require_admin(request)
+    clean_user = req.username.strip()
+    if not clean_user:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    if not req.password.strip():
+        raise HTTPException(status_code=400, detail="Initial password is required.")
+
+    existing = get_user_with_hash(clean_user)
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Username '{clean_user}' already exists.")
+
+    new_user = create_user(
+        username=clean_user,
+        password=req.password,
+        email=req.email or "",
+        display_name=req.display_name or "",
+        role=req.role or "member"
+    )
+    return {"success": True, "user": new_user, "message": f"User '{clean_user}' created successfully"}
+
+
+@app.patch("/api/users/{user_id}")
+def api_update_user(user_id: int, req: UserUpdateRequest, request: Request):
+    """Manager / Admin endpoint: update role, status, or reset password for any user."""
+    require_admin(request)
+    target = get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    if req.new_password and req.new_password.strip():
+        update_user_password(user_id, req.new_password.strip())
+
+    updated = update_user_profile(
+        user_id,
+        display_name=req.display_name,
+        email=req.email,
+        role=req.role,
+        status=req.status
+    )
+    return {"success": True, "user": updated, "message": "User updated successfully"}
+
+
+@app.delete("/api/users/{user_id}")
+def api_delete_user(user_id: int, request: Request):
+    """Manager / Admin endpoint: delete a user account."""
+    admin = require_admin(request)
+    if admin.get("id") == user_id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own active administrator account.")
+    delete_user(user_id)
+    return {"success": True, "message": "User account deleted successfully"}
 
 
 @app.get("/api/places/config")

@@ -13,6 +13,7 @@ let activeDrawerLeadId = null;
 let notesDebounceTimer = null;
 let pagesToFetch = 3;
 let currentCreditStatus = null;
+let currentUser = null;
 // Auto-route to Railway backend if frontend is hosted on Vercel
 const DEFAULT_RAILWAY_BACKEND = 'https://web-production-77cf5.up.railway.app';
 let autoDetectedApiBase = '';
@@ -93,13 +94,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Close user menu on click outside
+  // Close user menu on click outside, and close modals when backdrop is clicked
   document.addEventListener('click', (e) => {
     const menuWrapper = document.getElementById('userMenuWrapper');
     if (menuWrapper && !menuWrapper.contains(e.target)) {
       closeUserMenu();
     }
+    if (e.target && e.target.classList && (e.target.classList.contains('modal-backdrop') || e.target.classList.contains('modal-overlay'))) {
+      e.target.classList.add('hidden');
+    }
   });
+
+function closeModalOnBackdrop(event, modalId) {
+  if (event && event.target && event.target.id === modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) modal.classList.add('hidden');
+  }
+}
 
   // Escape key closes side drawer, modals, and user menu
   document.addEventListener('keydown', (e) => {
@@ -110,6 +121,8 @@ document.addEventListener('DOMContentLoaded', () => {
       closeSettingsModal();
       closeHelpModal();
       closePolicyModal();
+      closeAccountModal();
+      closeUserEditModal();
       closeUserMenu();
     }
   });
@@ -121,7 +134,9 @@ async function checkAuthStatus() {
     if (res.ok) {
       const data = await res.json();
       if (data.authenticated) {
+        currentUser = data.user;
         applyBranding(data);
+        updateUserMenuUI();
         document.getElementById('loginView')?.classList.add('hidden');
         document.getElementById('appShell')?.classList.remove('hidden');
         applySavedSettings();
@@ -135,15 +150,36 @@ async function checkAuthStatus() {
     console.error('Failed checking auth status:', e);
   }
   // Not authenticated
+  currentUser = null;
   document.getElementById('appShell')?.classList.add('hidden');
   document.getElementById('loginView')?.classList.remove('hidden');
   setTimeout(() => document.getElementById('inputPassword')?.focus(), 80);
 }
 
+function updateUserMenuUI() {
+  if (!currentUser) return;
+  const avatarBtn = document.getElementById('userMenuBtn');
+  const displayNameEl = document.getElementById('userMenuBrandTitle');
+  const roleTagEl = document.getElementById('userMenuRoleTag');
+  const menuItemTeam = document.getElementById('menuItemTeam');
+
+  const name = currentUser.display_name || currentUser.username || 'Admin';
+  if (displayNameEl) displayNameEl.textContent = name;
+  if (avatarBtn) avatarBtn.textContent = (name.charAt(0) || 'A').toUpperCase();
+
+  const isAdmin = currentUser.role === 'admin';
+  if (roleTagEl) {
+    roleTagEl.textContent = isAdmin ? 'Manager / Admin' : 'Standard Member';
+  }
+  if (menuItemTeam) {
+    menuItemTeam.classList.toggle('hidden', !isAdmin);
+  }
+}
+
 function applyBranding(data) {
   if (!data) return;
   const brandTitle = document.getElementById('userMenuBrandTitle');
-  if (brandTitle && data.brand_name) brandTitle.textContent = data.brand_name;
+  if (brandTitle && data.brand_name && !currentUser) brandTitle.textContent = data.brand_name;
   const footerBrand = document.getElementById('footerBrand');
   if (footerBrand && data.brand_name) footerBrand.textContent = data.brand_name;
   const footerVer = document.getElementById('footerVersion');
@@ -193,6 +229,10 @@ async function handleLoginSubmit(event) {
     // Authenticated
     if (data.token) {
       localStorage.setItem('MAPLEAD_AUTH_TOKEN', data.token);
+    }
+    if (data.user) {
+      currentUser = data.user;
+      updateUserMenuUI();
     }
     if (pwdInput) pwdInput.value = '';
     document.getElementById('loginView')?.classList.add('hidden');
@@ -412,6 +452,449 @@ function closePolicyModal() {
 }
 
 // ==========================================================================
+// Account & Team Management (Manager / Admin Level)
+// ==========================================================================
+let teamUsersList = [];
+
+function openAccountModal(tab = 'profile') {
+  closeUserMenu();
+  const modal = document.getElementById('accountModal');
+  if (!modal) return;
+
+  // Populate profile fields with currentUser
+  if (currentUser) {
+    const usernameEl = document.getElementById('profUsername');
+    const badgeEl = document.getElementById('profRoleBadge');
+    const nameEl = document.getElementById('profDisplayName');
+    const emailEl = document.getElementById('profEmail');
+
+    if (usernameEl) usernameEl.value = currentUser.username || '';
+    if (badgeEl) {
+      const isAdmin = currentUser.role === 'admin';
+      badgeEl.textContent = isAdmin ? 'Manager / Admin' : 'Standard Member';
+      badgeEl.className = `role-badge ${isAdmin ? 'admin' : 'member'}`;
+    }
+    if (nameEl) nameEl.value = currentUser.display_name || '';
+    if (emailEl) emailEl.value = currentUser.email || '';
+  }
+
+  // Clear password fields
+  const curPwd = document.getElementById('pwdCurrent');
+  const newPwd = document.getElementById('pwdNew');
+  if (curPwd) curPwd.value = '';
+  if (newPwd) newPwd.value = '';
+
+  // Show/Hide team tab button based on permissions
+  const tabTeamBtn = document.getElementById('accountTabBtnTeam');
+  if (tabTeamBtn) {
+    tabTeamBtn.classList.toggle('hidden', currentUser?.role !== 'admin');
+  }
+
+  switchAccountTab(tab === 'team' && currentUser?.role === 'admin' ? 'team' : 'profile');
+  modal.classList.remove('hidden');
+}
+
+function closeAccountModal() {
+  const modal = document.getElementById('accountModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function switchAccountTab(tab) {
+  const btnProfile = document.getElementById('accountTabBtnProfile');
+  const btnTeam = document.getElementById('accountTabBtnTeam');
+  const contentProfile = document.getElementById('accountContentProfile');
+  const contentTeam = document.getElementById('accountContentTeam');
+
+  if (tab === 'team') {
+    btnProfile?.classList.remove('active');
+    btnTeam?.classList.add('active');
+    contentProfile?.classList.add('hidden');
+    contentTeam?.classList.remove('hidden');
+    loadAllUsers();
+  } else {
+    btnProfile?.classList.add('active');
+    btnTeam?.classList.remove('active');
+    contentProfile?.classList.remove('hidden');
+    contentTeam?.classList.add('hidden');
+  }
+}
+
+async function handleProfileFormSubmit(event) {
+  event.preventDefault();
+  const btn = document.getElementById('btnSaveProfile');
+  const displayName = document.getElementById('profDisplayName')?.value.trim();
+  const email = document.getElementById('profEmail')?.value.trim();
+
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API_BASE}/api/account/me`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: displayName, email })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'Failed to update profile');
+      return;
+    }
+
+    if (data.user) {
+      currentUser = data.user;
+      updateUserMenuUI();
+    }
+    showToast('Profile updated successfully');
+  } catch (e) {
+    showToast('Network error updating profile');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function handlePasswordChangeSubmit(event) {
+  event.preventDefault();
+  const btn = document.getElementById('btnChangePassword');
+  const currentPassword = document.getElementById('pwdCurrent')?.value;
+  const newPassword = document.getElementById('pwdNew')?.value;
+
+  if (!newPassword || newPassword.length < 6) {
+    showToast('New password must be at least 6 characters');
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch(`${API_BASE}/api/account/me`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.detail || 'Failed to change password');
+      return;
+    }
+
+    const curPwd = document.getElementById('pwdCurrent');
+    const newPwd = document.getElementById('pwdNew');
+    if (curPwd) curPwd.value = '';
+    if (newPwd) newPwd.value = '';
+    showToast('Password changed successfully');
+  } catch (e) {
+    showToast('Network error updating password');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// User Accounts CRUD for Admins
+async function loadAllUsers() {
+  const tbody = document.getElementById('usersTableBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="5" style="text-align: center; color: var(--color-text-muted); padding: 24px;">
+        Loading team accounts...
+      </td>
+    </tr>
+  `;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/users`);
+    if (!res.ok) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; color: var(--color-destructive); padding: 24px;">
+            Failed to load users list. Admin permissions required.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const data = await res.json();
+    teamUsersList = data.users || [];
+    renderUsersTable(teamUsersList);
+  } catch (e) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; color: var(--color-destructive); padding: 24px;">
+          Error connecting to users service.
+        </td>
+      </tr>
+    `;
+  }
+}
+
+function renderUsersTable(users) {
+  const tbody = document.getElementById('usersTableBody');
+  if (!tbody) return;
+
+  if (!users || users.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; color: var(--color-text-muted); padding: 24px;">
+          No team members registered yet.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = users.map(u => {
+    const isSelf = currentUser && (currentUser.id === u.id || currentUser.username === u.username);
+    const isAdmin = u.role === 'admin';
+    const isActive = u.status === 'active';
+
+    const roleBadge = isAdmin ?
+      '<span class="role-badge admin">Manager / Admin</span>' :
+      '<span class="role-badge member">Member</span>';
+
+    const statusBadge = isActive ?
+      '<span class="status-badge active">Active</span>' :
+      '<span class="status-badge disabled">Disabled</span>';
+
+    const userSelfTag = isSelf ? ' <span class="quiet-hint" style="font-size:11px;">(You)</span>' : '';
+
+    return `
+      <tr>
+        <td>
+          <strong style="color: var(--color-text-main);">${escapeHtml(u.username)}</strong>${userSelfTag}
+        </td>
+        <td>
+          <div>${escapeHtml(u.display_name || '—')}</div>
+          <div class="quiet-hint" style="font-size: 11px;">${escapeHtml(u.email || 'No email')}</div>
+        </td>
+        <td>${roleBadge}</td>
+        <td>${statusBadge}</td>
+        <td style="text-align: right;">
+          <div style="display: inline-flex; gap: 6px; align-items: center; justify-content: flex-end;">
+            <button type="button" class="btn-action-sm" onclick="openEditUserModal('${u.id}')" title="Edit account details">
+              Edit
+            </button>
+            <button type="button" class="btn-action-sm" onclick="promptResetUserPassword('${u.id}', '${escapeHtml(u.username)}')" title="Reset password">
+              Key
+            </button>
+            ${!isSelf ? `
+              <button type="button" class="btn-action-sm" onclick="toggleUserStatus('${u.id}', '${u.status}')" title="${isActive ? 'Disable account' : 'Activate account'}">
+                ${isActive ? 'Disable' : 'Enable'}
+              </button>
+              <button type="button" class="btn-action-sm danger" onclick="deleteUserAccount('${u.id}', '${escapeHtml(u.username)}')" title="Delete user">
+                Delete
+              </button>
+            ` : ''}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openCreateUserModal() {
+  document.getElementById('userEditModalTitle').textContent = 'Add new team member';
+  document.getElementById('editUserId').value = '';
+  const usernameInput = document.getElementById('editUsername');
+  if (usernameInput) {
+    usernameInput.value = '';
+    usernameInput.disabled = false;
+  }
+  document.getElementById('editRole').value = 'member';
+  document.getElementById('editDisplayName').value = '';
+  document.getElementById('editEmail').value = '';
+  const pwdInput = document.getElementById('editPassword');
+  if (pwdInput) {
+    pwdInput.value = '';
+    pwdInput.required = true;
+  }
+  document.getElementById('editPasswordLabel').textContent = 'Initial password';
+  document.getElementById('editPasswordHint').textContent = 'Required for new accounts (minimum 6 characters).';
+  document.getElementById('userEditModal').classList.remove('hidden');
+}
+
+function openEditUserModal(userId) {
+  const user = teamUsersList.find(u => u.id === userId);
+  if (!user) return;
+
+  document.getElementById('userEditModalTitle').textContent = `Edit account: ${user.username}`;
+  document.getElementById('editUserId').value = user.id;
+  const usernameInput = document.getElementById('editUsername');
+  if (usernameInput) {
+    usernameInput.value = user.username;
+    usernameInput.disabled = true; // Username is immutable
+  }
+  document.getElementById('editRole').value = user.role || 'member';
+  document.getElementById('editDisplayName').value = user.display_name || '';
+  document.getElementById('editEmail').value = user.email || '';
+  const pwdInput = document.getElementById('editPassword');
+  if (pwdInput) {
+    pwdInput.value = '';
+    pwdInput.required = false;
+  }
+  document.getElementById('editPasswordLabel').textContent = 'New password (optional)';
+  document.getElementById('editPasswordHint').textContent = 'Leave blank to keep existing password.';
+  document.getElementById('userEditModal').classList.remove('hidden');
+}
+
+function closeUserEditModal() {
+  const modal = document.getElementById('userEditModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function handleUserFormSubmit(event) {
+  event.preventDefault();
+  const btn = document.getElementById('btnSaveUser');
+  const userId = document.getElementById('editUserId').value;
+  const username = document.getElementById('editUsername').value.trim();
+  const role = document.getElementById('editRole').value;
+  const displayName = document.getElementById('editDisplayName').value.trim();
+  const email = document.getElementById('editEmail').value.trim();
+  const password = document.getElementById('editPassword').value;
+
+  if (btn) btn.disabled = true;
+
+  try {
+    if (userId) {
+      // Update existing user
+      const payload = {
+        role,
+        display_name: displayName,
+        email
+      };
+      if (password) {
+        if (password.length < 6) {
+          showToast('Password must be at least 6 characters');
+          if (btn) btn.disabled = false;
+          return;
+        }
+        payload.password = password;
+      }
+
+      const res = await apiFetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Failed to update user');
+        return;
+      }
+      showToast('User account updated');
+    } else {
+      // Create new user
+      if (!username || !password) {
+        showToast('Username and password are required');
+        if (btn) btn.disabled = false;
+        return;
+      }
+      if (password.length < 6) {
+        showToast('Password must be at least 6 characters');
+        if (btn) btn.disabled = false;
+        return;
+      }
+
+      const res = await apiFetch(`${API_BASE}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          password,
+          role,
+          display_name: displayName,
+          email
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Failed to create user');
+        return;
+      }
+      showToast(`User ${username} created`);
+    }
+
+    closeUserEditModal();
+    loadAllUsers();
+  } catch (e) {
+    showToast('Network error saving user');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function toggleUserStatus(userId, currentStatus) {
+  const newStatus = currentStatus === 'active' ? 'disabled' : 'active';
+  const label = newStatus === 'active' ? 'enable' : 'disable';
+
+  if (!confirm(`Are you sure you want to ${label} this account?`)) return;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: newStatus })
+    });
+    if (res.ok) {
+      showToast(`Account ${newStatus}`);
+      loadAllUsers();
+    } else {
+      const data = await res.json();
+      showToast(data.detail || 'Failed to change account status');
+    }
+  } catch (e) {
+    showToast('Failed to update status');
+  }
+}
+
+async function promptResetUserPassword(userId, username) {
+  const newPass = prompt(`Enter new password for ${username} (min 6 characters):`);
+  if (!newPass) return;
+  if (newPass.length < 6) {
+    showToast('Password must be at least 6 characters');
+    return;
+  }
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newPass })
+    });
+    if (res.ok) {
+      showToast(`Password updated for ${username}`);
+    } else {
+      const data = await res.json();
+      showToast(data.detail || 'Failed to reset password');
+    }
+  } catch (e) {
+    showToast('Failed to reset password');
+  }
+}
+
+async function deleteUserAccount(userId, username) {
+  if (!confirm(`Permanently delete account "${username}"? This cannot be undone.`)) return;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      showToast(`Account "${username}" deleted`);
+      loadAllUsers();
+    } else {
+      const data = await res.json();
+      showToast(data.detail || 'Failed to delete user');
+    }
+  } catch (e) {
+    showToast('Failed to delete user');
+  }
+}
+
+// ==========================================================================
 // App Mode Switcher (Find leads vs My leads)
 // ==========================================================================
 function setAppMode(mode) {
@@ -530,6 +1013,7 @@ function updateCreditsMeterUI(status) {
 }
 
 async function openCreditsModal() {
+  closeUserMenu();
   const modal = document.getElementById('creditsModal');
   if (!modal) return;
   modal.classList.remove('hidden');
