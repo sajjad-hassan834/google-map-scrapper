@@ -303,11 +303,12 @@ def api_auth_login(req: LoginRequest, request: Request, response: Response):
         max_age=SESSION_DURATION_SECONDS,
         path="/",
         httponly=True,
-        samesite="lax",
+        samesite="none" if is_https else "lax",
         secure=is_https
     )
     return {
         "success": True,
+        "token": token,
         "brand_name": BRAND_NAME,
         "message": "Signed in successfully"
     }

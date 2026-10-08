@@ -13,26 +13,37 @@ let activeDrawerLeadId = null;
 let notesDebounceTimer = null;
 let pagesToFetch = 3;
 let currentCreditStatus = null;
-// Base API URL: Defaults to relative /api or custom Railway backend URL
-const API_BASE = window.API_BASE_URL || localStorage.getItem('MAPLEAD_API_BASE') || '';
+// Auto-route to Railway backend if frontend is hosted on Vercel
+const DEFAULT_RAILWAY_BACKEND = 'https://web-production-77cf5.up.railway.app';
+let autoDetectedApiBase = '';
+if (typeof window !== 'undefined' && window.location && window.location.hostname.includes('vercel.app')) {
+  autoDetectedApiBase = DEFAULT_RAILWAY_BACKEND;
+}
+const API_BASE = window.API_BASE_URL || localStorage.getItem('MAPLEAD_API_BASE') || autoDetectedApiBase;
 
 /**
  * Universal credentialed fetch wrapper.
- * Ensures signed session cookies are included on all calls.
- * Catches 401 Unauthorized and redirects smoothly to the login view.
+ * Transmits both signed session cookies and Authorization: Bearer tokens.
+ * Works seamlessly across cross-domain deployments (Vercel -> Railway) and single-platform setups.
  */
 async function apiFetch(url, options = {}) {
+  const token = localStorage.getItem('MAPLEAD_AUTH_TOKEN');
+  const headers = {
+    ...(options.headers || {})
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const mergedOptions = {
     credentials: 'include',
     ...options,
-    headers: {
-      ...(options.headers || {})
-    }
+    headers
   };
 
   const response = await fetch(url, mergedOptions);
   if (response.status === 401 && !url.includes('/api/auth/status') && !url.includes('/api/auth/login')) {
-    // Session expired or unauthenticated
+    localStorage.removeItem('MAPLEAD_AUTH_TOKEN');
     document.getElementById('appShell')?.classList.add('hidden');
     document.getElementById('loginView')?.classList.remove('hidden');
     const errBox = document.getElementById('loginErrorBox');
@@ -180,6 +191,9 @@ async function handleLoginSubmit(event) {
     }
 
     // Authenticated
+    if (data.token) {
+      localStorage.setItem('MAPLEAD_AUTH_TOKEN', data.token);
+    }
     if (pwdInput) pwdInput.value = '';
     document.getElementById('loginView')?.classList.add('hidden');
     document.getElementById('appShell')?.classList.remove('hidden');
@@ -206,6 +220,7 @@ async function handleLogout() {
   } catch (e) {
     console.error('Logout error:', e);
   }
+  localStorage.removeItem('MAPLEAD_AUTH_TOKEN');
   closeUserMenu();
   document.getElementById('appShell')?.classList.add('hidden');
   document.getElementById('loginView')?.classList.remove('hidden');
