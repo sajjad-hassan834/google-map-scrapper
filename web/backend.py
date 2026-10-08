@@ -2,40 +2,12 @@ import os
 import csv
 import io
 import json
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
-from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Query, Body
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
 
-from web.crm_db import (
-    get_all_crm_leads, save_or_update_lead, import_bulk_leads,
-    update_lead_stage, update_lead_notes, delete_lead, get_crm_stats
-)
-from web.credits_db import (
-    get_credit_status, update_credit_settings, increment_credit_usage,
-    log_places_search, generate_cache_key, get_cached_search_results,
-    store_cached_search_results
-)
-
-app = FastAPI(title="MapLead Pro & CRM Engine", version="2.5.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-SCRAPER_BASE = os.environ.get("SCRAPER_BASE_URL", "http://localhost:8080")
-UA = "google-maps-scraper-kit/2.5"
-
-# Load .env if present
+# Load .env if present before importing or reading configuration
 _env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 if os.path.exists(_env_path):
     try:
@@ -47,6 +19,80 @@ if os.path.exists(_env_path):
                     os.environ.setdefault(_k.strip(), _v.strip())
     except Exception:
         pass
+
+from typing import List, Optional, Dict, Any
+from fastapi import FastAPI, HTTPException, Query, Body, Request, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+
+from web.config import (
+    BRAND_NAME, BRAND_TAGLINE, APP_VERSION, META_DESCRIPTION,
+    SOCIAL_PREVIEW_TITLE, DEFAULT_MONTHLY_LIMIT, DEFAULT_SAFETY_BUFFER
+)
+from web.auth import (
+    authenticate_password, create_session_token, verify_request_auth,
+    get_client_ip, COOKIE_NAME, SESSION_DURATION_SECONDS
+)
+from web.crm_db import (
+    get_all_crm_leads, save_or_update_lead, import_bulk_leads,
+    update_lead_stage, update_lead_notes, delete_lead, get_crm_stats
+)
+from web.credits_db import (
+    get_credit_status, update_credit_settings, increment_credit_usage,
+    log_places_search, generate_cache_key, get_cached_search_results,
+    store_cached_search_results
+)
+
+app = FastAPI(title=f"{BRAND_NAME} Lead Finder & CRM Engine", version=APP_VERSION)
+
+# CORS configured for credentials support across local, Railway, and Vercel domains
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def enforce_auth_middleware(request: Request, call_next):
+    """Enforce session authentication on all /api/* routes except public auth & config."""
+    path = request.url.path
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    # Allow CORS preflight requests
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # Publicly accessible routes
+    public_endpoints = {
+        "/api/auth/login",
+        "/api/auth/status",
+        "/api/auth/logout",
+        "/api/config"
+    }
+    if path in public_endpoints:
+        return await call_next(request)
+
+    # Check for valid signed 7-day session cookie
+    if not verify_request_auth(request):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required. Please log in to continue."}
+        )
+
+    return await call_next(request)
+
+
+SCRAPER_BASE = os.environ.get("SCRAPER_BASE_URL", "http://localhost:8080")
+UA = "google-maps-scraper-kit/2.5"
+
+class LoginRequest(BaseModel):
+    password: str
 
 class PlacesSearchRequest(BaseModel):
     api_key: Optional[str] = ""
@@ -211,6 +257,72 @@ def format_places_new_item(item: Dict[str, Any]) -> Dict[str, Any]:
         "opportunity_reason": opp["reason"],
         "source": "Google Places API"
     }
+
+
+@app.get("/api/config")
+def api_config():
+    """Returns central branding and metadata configuration."""
+    return {
+        "brand_name": BRAND_NAME,
+        "brand_tagline": BRAND_TAGLINE,
+        "app_version": APP_VERSION,
+        "meta_description": META_DESCRIPTION,
+        "social_preview_title": SOCIAL_PREVIEW_TITLE,
+        "default_monthly_limit": DEFAULT_MONTHLY_LIMIT,
+        "default_safety_buffer": DEFAULT_SAFETY_BUFFER
+    }
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    """Returns whether the current client is authenticated."""
+    is_auth = verify_request_auth(request)
+    return {
+        "authenticated": is_auth,
+        "brand_name": BRAND_NAME,
+        "brand_tagline": BRAND_TAGLINE,
+        "app_version": APP_VERSION
+    }
+
+
+@app.post("/api/auth/login")
+def api_auth_login(req: LoginRequest, request: Request, response: Response):
+    """Validate password and issue signed 7-day session cookie."""
+    ip = get_client_ip(request)
+    success, msg = authenticate_password(req.password, ip)
+    if not success:
+        status_code = 429 if "Too many" in msg else 401
+        raise HTTPException(status_code=status_code, detail=msg)
+
+    token = create_session_token()
+    is_https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=SESSION_DURATION_SECONDS,
+        path="/",
+        httponly=True,
+        samesite="lax",
+        secure=is_https
+    )
+    return {
+        "success": True,
+        "brand_name": BRAND_NAME,
+        "message": "Signed in successfully"
+    }
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(response: Response):
+    """Log out by clearing the session cookie."""
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="lax"
+    )
+    return {"success": True, "message": "Signed out successfully"}
 
 
 @app.get("/api/places/config")

@@ -4,49 +4,139 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MapLead — Local Business Lead Finder & CRM</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta name="description" content="Find local businesses that need a website. Lead generation engine and lightweight CRM for web design freelancers.">
+  <meta property="og:title" content="MapLead — Local Business Lead Finder & CRM">
+  <meta property="og:description" content="Find local businesses that need a website. Fast search with free tier protection and built-in lead CRM.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="logo.svg">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="MapLead — Local Business Lead Finder & CRM">
+  <meta name="twitter:description" content="Find local businesses that need a website. Lead generation engine and lightweight CRM for web design freelancers.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
-  <!-- Top Navigation Bar -->
-  <header class="topbar">
-    <div class="topbar-inner">
-      <div class="topbar-left">
-        <a href="#" class="brand-link" onclick="setAppMode('search'); return false;">
-          <span class="brand-name">MapLead</span>
-        </a>
-        <nav class="nav-tabs" aria-label="Main Navigation">
-          <button class="nav-tab active" id="tabNavSearch" onclick="setAppMode('search')" type="button">
-            Find leads
-          </button>
-          <button class="nav-tab" id="tabNavCrm" onclick="setAppMode('crm')" type="button">
-            My leads
-            <span class="nav-count" id="navCrmCount">0</span>
-          </button>
-        </nav>
+
+  <!-- ========================================== -->
+  <!-- BRANDED LOGIN VIEW                         -->
+  <!-- ========================================== -->
+  <div id="loginView" class="login-view-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <img src="logo.svg" alt="MapLead" class="login-logo" width="160" height="36">
+        <p class="login-tagline" id="loginTagline">Find local businesses that need a website</p>
       </div>
 
-      <div class="topbar-right">
-        <!-- Fast search credits meter -->
-        <button type="button" class="credits-meter-btn" id="creditsMeterBtn" onclick="openCreditsModal()" title="Fast search free tier meter (click for usage & settings)">
-          <div class="meter-text-row">
-            <span class="meter-title" id="meterMainText">Fast search: 1,000 of 1,000 left</span>
-          </div>
-          <div class="meter-bar-track">
-            <div class="meter-bar-fill" id="meterBarFill" style="width: 100%;"></div>
-          </div>
-          <div class="meter-sub-row" id="meterSubText">Resets in 24 days · about 39 per day</div>
-        </button>
+      <form id="loginForm" class="login-form" onsubmit="handleLoginSubmit(event)">
+        <div id="loginErrorBox" class="login-error-box hidden" role="alert">
+          <span class="error-icon">⚠️</span>
+          <span id="loginErrorText">Incorrect password. Please try again.</span>
+        </div>
 
-        <div class="system-status" id="systemStatus">
-          <span class="status-dot"></span>
-          <span class="status-label">Google API connected · Scraper online</span>
+        <div class="login-field-group">
+          <label for="inputPassword" class="login-label">Application password</label>
+          <input 
+            type="password" 
+            id="inputPassword" 
+            class="login-input" 
+            placeholder="Enter password" 
+            required 
+            autocomplete="current-password"
+            autofocus
+          >
+        </div>
+
+        <button type="submit" class="btn btn-primary login-submit-btn" id="btnLoginSubmit">
+          <span class="btn-spinner hidden" id="loginSpinner"></span>
+          <span id="btnLoginText">Sign in</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MAIN APPLICATION SHELL                     -->
+  <!-- ========================================== -->
+  <div id="appShell" class="hidden">
+    <!-- Top Navigation Bar -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-left">
+          <a href="#" class="brand-link" onclick="setAppMode('search'); return false;" title="MapLead Home">
+            <img src="logo.svg" alt="MapLead" class="topbar-logo" width="130" height="28">
+          </a>
+          <nav class="nav-tabs" aria-label="Main Navigation">
+            <button class="nav-tab active" id="tabNavSearch" onclick="setAppMode('search')" type="button">
+              Find leads
+            </button>
+            <button class="nav-tab" id="tabNavCrm" onclick="setAppMode('crm')" type="button">
+              My leads
+              <span class="nav-count" id="navCrmCount">0</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Fast search credits meter -->
+          <button type="button" class="credits-meter-btn" id="creditsMeterBtn" onclick="openCreditsModal()" title="Fast search free tier meter (click for usage & settings)">
+            <div class="meter-text-row">
+              <span class="meter-title" id="meterMainText">Fast search: 1,000 of 1,000 left</span>
+            </div>
+            <div class="meter-bar-track">
+              <div class="meter-bar-fill" id="meterBarFill" style="width: 100%;"></div>
+            </div>
+            <div class="meter-sub-row" id="meterSubText">Resets in 24 days · about 39 per day</div>
+          </button>
+
+          <div class="system-status" id="systemStatus">
+            <span class="status-dot"></span>
+            <span class="status-label">API connected · Scraper online</span>
+          </div>
+
+          <!-- User Menu Dropdown -->
+          <div class="user-menu-wrapper" id="userMenuWrapper">
+            <button 
+              type="button" 
+              class="user-avatar-btn" 
+              id="userMenuBtn" 
+              onclick="toggleUserMenu()" 
+              aria-haspopup="true" 
+              aria-expanded="false" 
+              aria-label="User navigation menu"
+              title="Account & navigation menu"
+            >
+              M
+            </button>
+            <div class="user-menu-dropdown hidden" id="userMenuDropdown" role="menu" aria-orientation="vertical">
+              <div class="user-menu-header">
+                <div class="user-menu-brand" id="userMenuBrandTitle">MapLead</div>
+                <div class="user-menu-status">Signed in session</div>
+              </div>
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openSettingsModal()">
+                <span class="menu-icon">⚙️</span>
+                <span>Settings</span>
+              </button>
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openHelpModal()">
+                <span class="menu-icon">📖</span>
+                <span>Help and guide</span>
+              </button>
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openCreditsModal()">
+                <span class="menu-icon">⚡</span>
+                <span>Credits and usage</span>
+              </button>
+              <div class="user-menu-divider" role="separator"></div>
+              <button type="button" class="user-menu-item logout" role="menuitem" onclick="handleLogout()">
+                <span class="menu-icon">🚪</span>
+                <span>Log out</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </header>
+    </header>
 
   <!-- Main Container -->
   <main class="page-container">
@@ -539,11 +629,179 @@
     </div>
   </div>
 
+  <!-- Settings Modal -->
+  <div class="modal-overlay hidden" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="settingsModalTitle">Settings</h3>
+        <button type="button" class="btn-close" onclick="closeSettingsModal()" aria-label="Close settings">✕</button>
+      </div>
+      <div class="modal-body">
+        <h4 class="settings-section-title">Free tier credits</h4>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label for="settingsMonthlyLimit">Monthly free limit</label>
+            <input type="number" id="settingsMonthlyLimit" class="input-field-sm" min="1" max="10000" value="1000">
+            <span class="field-hint">Google Places API provides 1,000 free requests per calendar month.</span>
+          </div>
+          <div class="settings-field">
+            <label for="settingsSafetyBuffer">Safety buffer</label>
+            <input type="number" id="settingsSafetyBuffer" class="input-field-sm" min="0" max="500" value="50">
+            <span class="field-hint">Hard stop prevents searches when remaining credits hit this buffer.</span>
+          </div>
+        </div>
+
+        <h4 class="settings-section-title">Search defaults</h4>
+        <div class="settings-grid">
+          <div class="settings-field">
+            <label for="settingsDefaultPages">Default pages to fetch</label>
+            <select id="settingsDefaultPages" class="select-field">
+              <option value="1">1 page (quick, 1 credit)</option>
+              <option value="2">2 pages (2 credits)</option>
+              <option value="3" selected>3 pages (standard, 3 credits)</option>
+            </select>
+            <span class="field-hint">1 page returns up to 20 local businesses.</span>
+          </div>
+          <div class="settings-field">
+            <label for="settingsMinReviews">Minimum reviews</label>
+            <input type="number" id="settingsMinReviews" class="input-field-sm" min="0" max="1000" value="1">
+            <span class="field-hint">Filter out businesses with fewer reviews.</span>
+          </div>
+          <div class="settings-field">
+            <label for="settingsMinRating">Minimum rating</label>
+            <select id="settingsMinRating" class="select-field">
+              <option value="0.0">Any rating</option>
+              <option value="3.0">3.0+ stars</option>
+              <option value="3.5">3.5+ stars</option>
+              <option value="4.0">4.0+ stars</option>
+              <option value="4.5">4.5+ stars</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Filter flags</label>
+            <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 4px;">
+              <label class="checkbox-label" style="font-size: 13px;">
+                <input type="checkbox" id="settingsNoWebsite" checked>
+                <span>No website only by default</span>
+              </label>
+              <label class="checkbox-label" style="font-size: 13px;">
+                <input type="checkbox" id="settingsMustHavePhone" checked>
+                <span>Must have phone number</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeSettingsModal()">Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="saveUserSettings()">Save settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help & Guide Modal -->
+  <div class="modal-overlay hidden" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="helpModalTitle">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <h3 class="modal-title" id="helpModalTitle">Help & guide</h3>
+        <button type="button" class="btn-close" onclick="closeHelpModal()" aria-label="Close guide">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="guide-accordion">
+          <!-- Section 1 -->
+          <div class="guide-block">
+            <h4 class="guide-block-title">🚀 Getting started</h4>
+            <div class="guide-block-content">
+              <ol class="guide-list">
+                <li><strong>Search format:</strong> Use targeted queries like <code>[niche] in [city, state]</code> (e.g., <em>painters in Tampa FL</em> or <em>roofers in Dallas TX</em>). Broad nationwide queries return only corporate headquarters.</li>
+                <li><strong>Lead filters:</strong> Keep <em>"No website only"</em> enabled to automatically identify businesses operating without an active web presence.</li>
+                <li><strong>Opportunity tiers:</strong> Businesses with 15+ Google reviews and no website are marked as <strong>HOT LEADS</strong> because they already have established customers but are leaking search traffic.</li>
+                <li><strong>Save to CRM:</strong> Click <em>"Save to CRM"</em> to add qualified prospects to your personal lead tracker.</li>
+                <li><strong>Pipeline stages:</strong> Move saved leads through <code>New Lead</code> → <code>Contacted</code> → <code>Audit Sent</code> → <code>In Discussion</code> → <code>Closed Won</code>.</li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Section 2 -->
+          <div class="guide-block">
+            <h4 class="guide-block-title">⚡ How credits work</h4>
+            <div class="guide-block-content">
+              <ul class="guide-list">
+                <li><strong>Fast search:</strong> Dispatches requests to the Google Places API (New). Each page of up to 20 businesses uses <strong>1 credit</strong>. A 3-page search uses 3 credits.</li>
+                <li><strong>Monthly free tier:</strong> Google provides <strong>1,000 free requests</strong> per calendar month on the Text Search Enterprise SKU.</li>
+                <li><strong>Timezone reset:</strong> Usage counters automatically reset to zero on the 1st of each month according to <strong>Pacific Time (PT)</strong>, matching Google's billing cycle.</li>
+                <li><strong>30-day cache:</strong> Repeating an identical search within 30 days costs <strong>0 credits</strong> and is served instantly from local storage.</li>
+                <li><strong>Deep search:</strong> Runs the local Docker browser scraper and uses <strong>0 Google credits</strong> (completely free and unlimited).</li>
+              </ul>
+              <div class="guide-tip">
+                💡 <strong>Tip:</strong> You can select <strong>1 page (quick)</strong> before searching to quickly inspect a city niche for just 1 credit.
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3 -->
+          <div class="guide-block">
+            <h4 class="guide-block-title">🤝 Contacting leads responsibly</h4>
+            <div class="guide-block-content">
+              <ul class="guide-list">
+                <li><strong>Call first:</strong> A polite phone call to the owner or office manager converts significantly better than cold emails for local service contractors.</li>
+                <li><strong>Be personalized:</strong> Mention specific details from their Google listing (e.g. <em>"I noticed you have 48 five-star reviews on Google, but your listing doesn't link to a mobile website"</em>).</li>
+                <li><strong>Respect anti-spam laws:</strong> Follow CAN-SPAM and applicable local laws. Always provide your legal business name, physical contact address, and a clear opt-out.</li>
+                <li><strong>Immediate opt-out:</strong> If an owner indicates they are not interested, mark the lead as <code>Lost</code> or delete it immediately and never reach out again.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeHelpModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Draft Policy & Terms Modal -->
+  <div class="modal-overlay hidden" id="policyModal" role="dialog" aria-modal="true" aria-labelledby="policyModalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="policyModalTitle">Policy</h3>
+        <button type="button" class="btn-close" onclick="closePolicyModal()" aria-label="Close modal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="draft-notice-banner">
+          <span>⚠️ Draft, review before launch</span>
+        </div>
+        <div class="legal-text-body" id="policyModalBody">
+          <!-- Injected via JavaScript -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closePolicyModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Footer -->
+  <footer class="app-footer">
+    <div class="footer-inner">
+      <div class="footer-left">
+        <span class="footer-brand" id="footerBrand">MapLead</span>
+        <span class="footer-sep">·</span>
+        <span class="footer-version" id="footerVersion">v2.5.0</span>
+      </div>
+      <div class="footer-right">
+        <button type="button" class="footer-link" onclick="openPolicyModal('privacy')">Privacy</button>
+        <button type="button" class="footer-link" onclick="openPolicyModal('terms')">Terms</button>
+      </div>
+    </div>
+  </footer>
+
+  </div><!-- /#appShell -->
+
   <!-- Confirmation Toast Notification -->
   <div class="toast-notification hidden" id="toastNotification" role="alert" aria-live="polite">
     <span class="toast-message" id="toastMessage">Action completed</span>
   </div>
 
-  <script src="app.js?v=8"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>

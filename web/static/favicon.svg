@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="pinGrad" x1="4" y1="2" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <!-- Modern Map Pin Shape -->
+  <path d="M16 2C9.925 2 5 6.925 5 13c0 7.8 9.3 16.3 9.7 16.66a1.5 1.5 0 0 0 2.6 0C17.7 29.3 27 20.8 27 13c0-6.075-4.925-11-11-11z" fill="url(#pinGrad)"/>
+  <!-- Inner Target Ring & Dot -->
+  <circle cx="16" cy="13" r="5" fill="#ffffff"/>
+  <circle cx="16" cy="13" r="2.5" fill="#1d4ed8"/>
+</svg>

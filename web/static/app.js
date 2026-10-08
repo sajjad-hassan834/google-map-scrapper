@@ -16,6 +16,35 @@ let currentCreditStatus = null;
 // Base API URL: Defaults to relative /api or custom Railway backend URL
 const API_BASE = window.API_BASE_URL || localStorage.getItem('MAPLEAD_API_BASE') || '';
 
+/**
+ * Universal credentialed fetch wrapper.
+ * Ensures signed session cookies are included on all calls.
+ * Catches 401 Unauthorized and redirects smoothly to the login view.
+ */
+async function apiFetch(url, options = {}) {
+  const mergedOptions = {
+    credentials: 'include',
+    ...options,
+    headers: {
+      ...(options.headers || {})
+    }
+  };
+
+  const response = await fetch(url, mergedOptions);
+  if (response.status === 401 && !url.includes('/api/auth/status') && !url.includes('/api/auth/login')) {
+    // Session expired or unauthenticated
+    document.getElementById('appShell')?.classList.add('hidden');
+    document.getElementById('loginView')?.classList.remove('hidden');
+    const errBox = document.getElementById('loginErrorBox');
+    const errText = document.getElementById('loginErrorText');
+    if (errBox && errText) {
+      errText.textContent = 'Session expired. Please enter password to continue.';
+      errBox.classList.remove('hidden');
+    }
+  }
+  return response;
+}
+
 // DOM Cache
 const inputQuery = document.getElementById('inputQuery');
 const checkNoWebsite = document.getElementById('checkNoWebsite');
@@ -39,12 +68,10 @@ const progressBarFill = document.getElementById('progressBarFill');
 const leadsTableBody = document.getElementById('leadsTableBody');
 
 // ==========================================================================
-// Initialization
+// Initialization & Authentication Lifecycle
 // ==========================================================================
 document.addEventListener('DOMContentLoaded', () => {
-  checkScraperHealth();
-  loadCrmLeads();
-  loadCreditsStatus();
+  checkAuthStatus();
 
   if (inputMinReviews) {
     inputMinReviews.addEventListener('input', (e) => {
@@ -55,15 +82,319 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Escape key closes side drawer and modals
+  // Close user menu on click outside
+  document.addEventListener('click', (e) => {
+    const menuWrapper = document.getElementById('userMenuWrapper');
+    if (menuWrapper && !menuWrapper.contains(e.target)) {
+      closeUserMenu();
+    }
+  });
+
+  // Escape key closes side drawer, modals, and user menu
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       closeLeadDrawer();
       closeExcludedModal();
       closeCreditsModal();
+      closeSettingsModal();
+      closeHelpModal();
+      closePolicyModal();
+      closeUserMenu();
     }
   });
 });
+
+async function checkAuthStatus() {
+  try {
+    const res = await apiFetch(`${API_BASE}/api/auth/status`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.authenticated) {
+        applyBranding(data);
+        document.getElementById('loginView')?.classList.add('hidden');
+        document.getElementById('appShell')?.classList.remove('hidden');
+        applySavedSettings();
+        checkScraperHealth();
+        loadCrmLeads();
+        loadCreditsStatus();
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('Failed checking auth status:', e);
+  }
+  // Not authenticated
+  document.getElementById('appShell')?.classList.add('hidden');
+  document.getElementById('loginView')?.classList.remove('hidden');
+  setTimeout(() => document.getElementById('inputPassword')?.focus(), 80);
+}
+
+function applyBranding(data) {
+  if (!data) return;
+  const brandTitle = document.getElementById('userMenuBrandTitle');
+  if (brandTitle && data.brand_name) brandTitle.textContent = data.brand_name;
+  const footerBrand = document.getElementById('footerBrand');
+  if (footerBrand && data.brand_name) footerBrand.textContent = data.brand_name;
+  const footerVer = document.getElementById('footerVersion');
+  if (footerVer && data.app_version) footerVer.textContent = `v${data.app_version}`;
+  const tagline = document.getElementById('loginTagline');
+  if (tagline && data.brand_tagline) tagline.textContent = data.brand_tagline;
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const pwdInput = document.getElementById('inputPassword');
+  const errBox = document.getElementById('loginErrorBox');
+  const errText = document.getElementById('loginErrorText');
+  const submitBtn = document.getElementById('btnLoginSubmit');
+  const spinner = document.getElementById('loginSpinner');
+  const btnText = document.getElementById('btnLoginText');
+
+  const password = pwdInput ? pwdInput.value : '';
+  if (!password) return;
+
+  if (errBox) errBox.classList.add('hidden');
+  if (submitBtn) submitBtn.disabled = true;
+  if (spinner) spinner.classList.remove('hidden');
+  if (btnText) btnText.textContent = 'Signing in...';
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.detail || 'Incorrect password. Please try again.';
+      if (errBox && errText) {
+        errText.textContent = msg;
+        errBox.classList.remove('hidden');
+      }
+      if (pwdInput) {
+        pwdInput.focus();
+        pwdInput.select();
+      }
+      return;
+    }
+
+    // Authenticated
+    if (pwdInput) pwdInput.value = '';
+    document.getElementById('loginView')?.classList.add('hidden');
+    document.getElementById('appShell')?.classList.remove('hidden');
+    showToast('Signed in');
+    applySavedSettings();
+    checkScraperHealth();
+    loadCrmLeads();
+    loadCreditsStatus();
+  } catch (e) {
+    if (errBox && errText) {
+      errText.textContent = 'Network or connection error. Please try again.';
+      errBox.classList.remove('hidden');
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (spinner) spinner.classList.add('hidden');
+    if (btnText) btnText.textContent = 'Sign in';
+  }
+}
+
+async function handleLogout() {
+  try {
+    await apiFetch(`${API_BASE}/api/auth/logout`, { method: 'POST' });
+  } catch (e) {
+    console.error('Logout error:', e);
+  }
+  closeUserMenu();
+  document.getElementById('appShell')?.classList.add('hidden');
+  document.getElementById('loginView')?.classList.remove('hidden');
+  const pwdInput = document.getElementById('inputPassword');
+  if (pwdInput) {
+    pwdInput.value = '';
+    setTimeout(() => pwdInput.focus(), 80);
+  }
+  showToast('Signed out');
+}
+
+// ==========================================================================
+// User Navigation Menu
+// ==========================================================================
+function toggleUserMenu() {
+  const dropdown = document.getElementById('userMenuDropdown');
+  const btn = document.getElementById('userMenuBtn');
+  if (!dropdown) return;
+  const isHidden = dropdown.classList.contains('hidden');
+  dropdown.classList.toggle('hidden', !isHidden);
+  if (btn) btn.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+}
+
+function closeUserMenu() {
+  const dropdown = document.getElementById('userMenuDropdown');
+  const btn = document.getElementById('userMenuBtn');
+  if (dropdown && !dropdown.classList.contains('hidden')) {
+    dropdown.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+}
+
+// ==========================================================================
+// Settings Modal & Preferences
+// ==========================================================================
+function openSettingsModal() {
+  closeUserMenu();
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+
+  if (currentCreditStatus) {
+    const limitInput = document.getElementById('settingsMonthlyLimit');
+    const bufferInput = document.getElementById('settingsSafetyBuffer');
+    if (limitInput) limitInput.value = currentCreditStatus.monthly_limit || 1000;
+    if (bufferInput) bufferInput.value = currentCreditStatus.safety_buffer || 50;
+  }
+
+  const saved = getStoredSettings();
+  const pagesSel = document.getElementById('settingsDefaultPages');
+  const minRev = document.getElementById('settingsMinReviews');
+  const minRat = document.getElementById('settingsMinRating');
+  const noWeb = document.getElementById('settingsNoWebsite');
+  const phone = document.getElementById('settingsMustHavePhone');
+
+  if (pagesSel) pagesSel.value = saved.defaultPages || '3';
+  if (minRev) minRev.value = saved.minReviews !== undefined ? saved.minReviews : '1';
+  if (minRat) minRat.value = saved.minRating !== undefined ? saved.minRating : '0.0';
+  if (noWeb) noWeb.checked = saved.noWebsiteOnly !== undefined ? saved.noWebsiteOnly : true;
+  if (phone) phone.checked = saved.mustHavePhone !== undefined ? saved.mustHavePhone : true;
+
+  modal.classList.remove('hidden');
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function getStoredSettings() {
+  try {
+    const raw = localStorage.getItem('MAPLEAD_SETTINGS');
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+async function saveUserSettings() {
+  const limitInput = document.getElementById('settingsMonthlyLimit');
+  const bufferInput = document.getElementById('settingsSafetyBuffer');
+  const pagesSel = document.getElementById('settingsDefaultPages');
+  const minRev = document.getElementById('settingsMinReviews');
+  const minRat = document.getElementById('settingsMinRating');
+  const noWeb = document.getElementById('settingsNoWebsite');
+  const phone = document.getElementById('settingsMustHavePhone');
+
+  const monthly_limit = parseInt(limitInput?.value) || 1000;
+  const safety_buffer = parseInt(bufferInput?.value) || 50;
+
+  try {
+    const res = await apiFetch(`${API_BASE}/api/credits/settings`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monthly_limit, safety_buffer })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      currentCreditStatus = data;
+      updateCreditsMeterUI(data);
+    }
+  } catch (e) {
+    console.error('Failed to sync credit settings:', e);
+  }
+
+  const settingsObj = {
+    defaultPages: pagesSel ? pagesSel.value : '3',
+    minReviews: minRev ? parseInt(minRev.value) || 0 : 1,
+    minRating: minRat ? minRat.value : '0.0',
+    noWebsiteOnly: noWeb ? noWeb.checked : true,
+    mustHavePhone: phone ? phone.checked : true
+  };
+  localStorage.setItem('MAPLEAD_SETTINGS', JSON.stringify(settingsObj));
+
+  applySavedSettings();
+  closeSettingsModal();
+  showToast('Settings saved');
+}
+
+function applySavedSettings() {
+  const saved = getStoredSettings();
+  if (saved.defaultPages) {
+    setPagesToFetch(parseInt(saved.defaultPages) || 3);
+  }
+  if (saved.minReviews !== undefined && inputMinReviews) {
+    inputMinReviews.value = saved.minReviews;
+    document.querySelectorAll('.pill-btn').forEach(b => {
+      b.classList.toggle('active', parseInt(b.textContent) === saved.minReviews);
+    });
+  }
+  if (saved.minRating !== undefined && selectMinRating) {
+    selectMinRating.value = saved.minRating;
+  }
+  if (saved.noWebsiteOnly !== undefined && checkNoWebsite) {
+    checkNoWebsite.checked = saved.noWebsiteOnly;
+  }
+  if (saved.mustHavePhone !== undefined && checkMustHavePhone) {
+    checkMustHavePhone.checked = saved.mustHavePhone;
+  }
+}
+
+// ==========================================================================
+// Help and Policy Modals
+// ==========================================================================
+function openHelpModal() {
+  closeUserMenu();
+  const modal = document.getElementById('helpModal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeHelpModal() {
+  const modal = document.getElementById('helpModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function openPolicyModal(type) {
+  const modal = document.getElementById('policyModal');
+  const title = document.getElementById('policyModalTitle');
+  const body = document.getElementById('policyModalBody');
+  if (!modal || !title || !body) return;
+
+  if (type === 'privacy') {
+    title.textContent = 'Privacy policy';
+    body.innerHTML = `
+      <h4>Information we process</h4>
+      <p>MapLead queries publicly available business listings directly from Google Places API or user-specified search parameters. All search queries and results are stored locally in your deployment database for caching and lead tracking.</p>
+      <h4>Data ownership & cookies</h4>
+      <p>Your session cookies and stored CRM leads belong entirely to your own installation. MapLead does not transmit your leads, API keys, or application passwords to any external analytics or third-party servers.</p>
+      <h4>Third-party APIs</h4>
+      <p>When executing searches, requests are dispatched to Google Places API subject to Google's standard developer terms and privacy policies.</p>
+    `;
+  } else {
+    title.textContent = 'Terms of service';
+    body.innerHTML = `
+      <h4>Acceptable use</h4>
+      <p>MapLead is designed for freelancers, web designers, and marketing agencies conducting targeted local B2B outreach. You agree to use search results responsibly and comply with applicable local telemarketing, commercial communication, and anti-spam regulations (such as CAN-SPAM).</p>
+      <h4>API quotas & billing</h4>
+      <p>You are solely responsible for managing your Google Cloud billing accounts and monitoring Google Places API usage. While MapLead includes safety buffers and credit meters, usage metrics in the Google Cloud Console govern official billing.</p>
+      <h4>Disclaimer</h4>
+      <p>This software is provided "as is", without warranty of any kind. You are responsible for ensuring your outreach practices comply with local regulations and ethical standards.</p>
+    `;
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closePolicyModal() {
+  const modal = document.getElementById('policyModal');
+  if (modal) modal.classList.add('hidden');
+}
 
 // ==========================================================================
 // App Mode Switcher (Find leads vs My leads)
@@ -143,7 +474,7 @@ function switchToDeepSearch() {
 // Credits Meter & Settings
 async function loadCreditsStatus() {
   try {
-    const res = await fetch(`${API_BASE}/api/credits/status`);
+    const res = await apiFetch(`${API_BASE}/api/credits/status`);
     if (!res.ok) return;
     const data = await res.json();
     currentCreditStatus = data;
@@ -189,7 +520,7 @@ async function openCreditsModal() {
   modal.classList.remove('hidden');
 
   try {
-    const res = await fetch(`${API_BASE}/api/credits/status`);
+    const res = await apiFetch(`${API_BASE}/api/credits/status`);
     if (res.ok) {
       const data = await res.json();
       currentCreditStatus = data;
@@ -244,7 +575,7 @@ async function saveCreditSettings() {
   const buffer = parseInt(document.getElementById('inputSafetyBuffer').value) || 50;
 
   try {
-    const res = await fetch(`${API_BASE}/api/credits/settings`, {
+    const res = await apiFetch(`${API_BASE}/api/credits/settings`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ monthly_limit: limit, safety_buffer: buffer })
@@ -285,7 +616,7 @@ function setMinReviews(count) {
 async function checkScraperHealth() {
   const statusEl = document.getElementById('systemStatus');
   try {
-    const res = await fetch(`${API_BASE}/api/scraper/health`);
+    const res = await apiFetch(`${API_BASE}/api/scraper/health`);
     const data = await res.json();
     if (data.status === 'up') {
       statusEl.querySelector('.status-dot').style.backgroundColor = 'var(--color-success)';
@@ -338,7 +669,7 @@ async function runPlacesSearch(query) {
       max_pages: pagesToFetch
     };
 
-    const resp = await fetch(`${API_BASE}/api/places/search`, {
+    const resp = await apiFetch(`${API_BASE}/api/places/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -385,13 +716,13 @@ async function runScraperSearch(query) {
   showProgress('Geocoding location...', 15);
 
   try {
-    const geoResp = await fetch(`${API_BASE}/api/geocode?place=${encodeURIComponent(query)}`);
+    const geoResp = await apiFetch(`${API_BASE}/api/geocode?place=${encodeURIComponent(query)}`);
     if (!geoResp.ok) throw new Error('Could not resolve location coordinates.');
     const geo = await geoResp.json();
 
     showProgress('Starting local scraper job...', 30);
 
-    const jobResp = await fetch(`${API_BASE}/api/scraper/start`, {
+    const jobResp = await apiFetch(`${API_BASE}/api/scraper/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -418,7 +749,7 @@ async function runScraperSearch(query) {
       showProgress(`Scraping Google Maps... (${attempts * 6}s)`, Math.min(30 + attempts * 1.5, 90));
       await new Promise(r => setTimeout(r, 6000));
 
-      const stResp = await fetch(`${API_BASE}/api/scraper/status/${jobId}`);
+      const stResp = await apiFetch(`${API_BASE}/api/scraper/status/${jobId}`);
       if (!stResp.ok) continue;
       const stData = await stResp.json();
 
@@ -435,7 +766,7 @@ async function runScraperSearch(query) {
       must_have_phone: checkMustHavePhone.checked
     };
 
-    const resResp = await fetch(`${API_BASE}/api/scraper/results/${jobId}`, {
+    const resResp = await apiFetch(`${API_BASE}/api/scraper/results/${jobId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(filterPayload)
@@ -581,7 +912,7 @@ function closeModalOnBackdrop(e, modalId) {
 // ==========================================================================
 async function loadCrmLeads() {
   try {
-    const res = await fetch(`${API_BASE}/api/crm/leads`);
+    const res = await apiFetch(`${API_BASE}/api/crm/leads`);
     if (!res.ok) return;
     const data = await res.json();
     crmLeads = data.leads || [];
@@ -698,7 +1029,7 @@ async function saveSingleLead(idx) {
   if (!lead) return;
 
   try {
-    const res = await fetch(`${API_BASE}/api/crm/leads`, {
+    const res = await apiFetch(`${API_BASE}/api/crm/leads`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(lead)
@@ -718,7 +1049,7 @@ async function importAllToCrm() {
   if (qualifiedLeads.length === 0) return;
 
   try {
-    const res = await fetch(`${API_BASE}/api/crm/import`, {
+    const res = await apiFetch(`${API_BASE}/api/crm/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(qualifiedLeads)
@@ -795,7 +1126,7 @@ async function handleDrawerStageChange(newStage) {
   if (!activeDrawerLeadId) return;
 
   try {
-    const res = await fetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}/stage`, {
+    const res = await apiFetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}/stage`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ stage: newStage })
@@ -823,7 +1154,7 @@ function handleDrawerNotesInput() {
     const followUp = document.getElementById('drawerFollowUpInput').value;
 
     try {
-      const res = await fetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}/notes`, {
+      const res = await apiFetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}/notes`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notes: notes, follow_up_date: followUp })
@@ -851,7 +1182,7 @@ async function deleteDrawerLead() {
   if (!confirm('Remove this lead from your CRM?')) return;
 
   try {
-    const res = await fetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}`, {
+    const res = await apiFetch(`${API_BASE}/api/crm/leads/${encodeURIComponent(activeDrawerLeadId)}`, {
       method: 'DELETE'
     });
     if (res.ok) {
@@ -900,7 +1231,7 @@ function copyAllPhones() {
 async function exportCsv() {
   if (qualifiedLeads.length === 0) return;
   try {
-    const resp = await fetch(`${API_BASE}/api/export/csv`, {
+    const resp = await apiFetch(`${API_BASE}/api/export/csv`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(qualifiedLeads)
@@ -925,7 +1256,7 @@ async function exportCrmCsv() {
     return;
   }
   try {
-    const resp = await fetch(`${API_BASE}/api/export/csv`, {
+    const resp = await apiFetch(`${API_BASE}/api/export/csv`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(crmLeads)
