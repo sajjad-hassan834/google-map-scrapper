@@ -1,6 +1,6 @@
 # Credits & Attribution
 
-Google Maps Scraper Kit is designed and built by Mahan ([@Mahanaicoach](https://github.com/Mahanaicoach)).
+Google Maps Scraper Kit is maintained by Sajjad Hassan ([@sajjad-hassan834](https://github.com/sajjad-hassan834)).
 One component, the Google Maps scraping engine, is open-source work by Georgios Komninos, credited below.
 
 ## Scraping engine

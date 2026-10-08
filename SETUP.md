@@ -35,7 +35,7 @@ If someone shared this folder with you, just `cd` into it:
 ```bash
 cd google-maps-scraper-kit
 ```
-(Or clone it from GitHub: `git clone https://github.com/Mahanaicoach/google-maps-scraper-kit.git && cd google-maps-scraper-kit`.)
+(Or clone it from GitHub: `git clone https://github.com/sajjad-hassan834/google-map-scrapper.git && cd google-map-scrapper`.)
 
 Create your local config (optional — defaults work as-is):
 ```bash

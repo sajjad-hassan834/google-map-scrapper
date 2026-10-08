@@ -44,8 +44,8 @@ a precise operating manual for it. Result: dozens to hundreds of verified listin
 Requires [Docker Desktop](https://www.docker.com/products/docker-desktop). Python 3 is optional (standard library only).
 
 ```bash
-git clone https://github.com/Mahanaicoach/google-maps-scraper-kit.git
-cd google-maps-scraper-kit
+git clone https://github.com/sajjad-hassan834/google-map-scrapper.git
+cd google-map-scrapper
 docker compose up -d
 ```
 
@@ -153,11 +153,11 @@ google-maps-scraper-kit/
 
 ## Support
 
-Found a bug? [Open an issue](https://github.com/Mahanaicoach/google-maps-scraper-kit/issues/new/choose) with
+Found a bug? [Open an issue](https://github.com/sajjad-hassan834/google-map-scrapper/issues/new/choose) with
 the command you ran and the error. Issues are for problems with the kit. Run your own scrapes with the
 quick start above; requests like "find me hotels in Hamburg" are closed without action.
 Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
-Built by [Mahan](https://github.com/Mahanaicoach). MIT licensed. Third-party components: [CREDITS.md](CREDITS.md).
+Built and maintained by [Sajjad Hassan](https://github.com/sajjad-hassan834). MIT licensed. Third-party components: [CREDITS.md](CREDITS.md).

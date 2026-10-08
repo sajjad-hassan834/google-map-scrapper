@@ -23,7 +23,7 @@ KEY = os.environ.get("SCRAPER_API_KEY", "")
 # Money-useful LEAD fields only — what you actually use to contact/qualify a lead.
 # Everything else (geo coordinates, IDs, hours, images, reviews blobs…) is dropped by default.
 LEAD = ["title", "phone", "emails", "website", "category", "address", "review_rating", "review_count"]
-UA = "google-maps-scraper-kit/1.0 (https://github.com/Mahanaicoach/google-maps-scraper-kit)"
+UA = "google-maps-scraper-kit/1.0 (https://github.com/sajjad-hassan834/google-map-scrapper)"
 
 
 def req(method, path, body=None):
