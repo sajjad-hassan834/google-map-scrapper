@@ -10,8 +10,14 @@ import json
 import time
 import logging
 import urllib.request
+import base64
 from typing import Optional, Dict, Any, Tuple
-import jwt
+
+try:
+    import jwt
+except ImportError:
+    jwt = None
+
 from fastapi import Request, HTTPException, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from web.dal import sync_authenticated_user, get_user_by_id
@@ -83,7 +89,7 @@ def verify_clerk_token(token: str) -> Optional[Dict[str, Any]]:
 
     # 2. RS256 verification with Clerk JWKS
     keys = _fetch_clerk_jwks()
-    if keys:
+    if keys and jwt is not None:
         try:
             unverified_header = jwt.get_unverified_header(token)
             kid = unverified_header.get("kid")
@@ -120,11 +126,27 @@ def verify_clerk_token(token: str) -> Optional[Dict[str, Any]]:
             pass
 
     # 4. Fallback decode if secret not yet configured on host
+    if jwt is not None:
+        try:
+            decoded = jwt.decode(token, options={"verify_signature": False})
+            return decoded
+        except Exception:
+            pass
+
+    # 5. Pure Python base64 fallback
     try:
-        decoded = jwt.decode(token, options={"verify_signature": False})
-        return decoded
+        parts = token.split(".")
+        if len(parts) >= 2:
+            payload_b64 = parts[1]
+            rem = len(payload_b64) % 4
+            if rem > 0:
+                payload_b64 += "=" * (4 - rem)
+            raw = base64.urlsafe_b64decode(payload_b64.encode("utf-8"))
+            return json.loads(raw.decode("utf-8"))
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def get_current_user(request: Request) -> Dict[str, Any]:

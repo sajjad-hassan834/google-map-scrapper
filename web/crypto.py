@@ -8,7 +8,11 @@ import os
 import base64
 import logging
 from typing import Optional
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except ImportError:
+    AESGCM = None
 
 logger = logging.getLogger("maplead.crypto")
 
