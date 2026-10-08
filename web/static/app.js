@@ -122,6 +122,7 @@ function closeModalOnBackdrop(event, modalId) {
       closeHelpModal();
       closePolicyModal();
       closeAccountModal();
+      closeTeamModal();
       closeUserEditModal();
       closeUserMenu();
     }
@@ -169,7 +170,7 @@ function updateUserMenuUI() {
 
   const isAdmin = currentUser.role === 'admin';
   if (roleTagEl) {
-    roleTagEl.textContent = isAdmin ? 'Manager / Admin' : 'Standard Member';
+    roleTagEl.textContent = isAdmin ? 'Admin' : 'Member';
   }
   if (menuItemTeam) {
     menuItemTeam.classList.toggle('hidden', !isAdmin);
@@ -452,11 +453,11 @@ function closePolicyModal() {
 }
 
 // ==========================================================================
-// Account & Team Management (Manager / Admin Level)
+// Account & Team Management
 // ==========================================================================
 let teamUsersList = [];
 
-function openAccountModal(tab = 'profile') {
+function openAccountModal() {
   closeUserMenu();
   const modal = document.getElementById('accountModal');
   if (!modal) return;
@@ -471,7 +472,7 @@ function openAccountModal(tab = 'profile') {
     if (usernameEl) usernameEl.value = currentUser.username || '';
     if (badgeEl) {
       const isAdmin = currentUser.role === 'admin';
-      badgeEl.textContent = isAdmin ? 'Manager / Admin' : 'Standard Member';
+      badgeEl.textContent = isAdmin ? 'Admin' : 'Member';
       badgeEl.className = `role-badge ${isAdmin ? 'admin' : 'member'}`;
     }
     if (nameEl) nameEl.value = currentUser.display_name || '';
@@ -484,13 +485,6 @@ function openAccountModal(tab = 'profile') {
   if (curPwd) curPwd.value = '';
   if (newPwd) newPwd.value = '';
 
-  // Show/Hide team tab button based on permissions
-  const tabTeamBtn = document.getElementById('accountTabBtnTeam');
-  if (tabTeamBtn) {
-    tabTeamBtn.classList.toggle('hidden', currentUser?.role !== 'admin');
-  }
-
-  switchAccountTab(tab === 'team' && currentUser?.role === 'admin' ? 'team' : 'profile');
   modal.classList.remove('hidden');
 }
 
@@ -499,24 +493,17 @@ function closeAccountModal() {
   if (modal) modal.classList.add('hidden');
 }
 
-function switchAccountTab(tab) {
-  const btnProfile = document.getElementById('accountTabBtnProfile');
-  const btnTeam = document.getElementById('accountTabBtnTeam');
-  const contentProfile = document.getElementById('accountContentProfile');
-  const contentTeam = document.getElementById('accountContentTeam');
+function openTeamModal() {
+  closeUserMenu();
+  const modal = document.getElementById('teamModal');
+  if (!modal) return;
+  loadAllUsers();
+  modal.classList.remove('hidden');
+}
 
-  if (tab === 'team') {
-    btnProfile?.classList.remove('active');
-    btnTeam?.classList.add('active');
-    contentProfile?.classList.add('hidden');
-    contentTeam?.classList.remove('hidden');
-    loadAllUsers();
-  } else {
-    btnProfile?.classList.add('active');
-    btnTeam?.classList.remove('active');
-    contentProfile?.classList.remove('hidden');
-    contentTeam?.classList.add('hidden');
-  }
+function closeTeamModal() {
+  const modal = document.getElementById('teamModal');
+  if (modal) modal.classList.add('hidden');
 }
 
 async function handleProfileFormSubmit(event) {
@@ -652,7 +639,7 @@ function renderUsersTable(users) {
     const isActive = u.status === 'active';
 
     const roleBadge = isAdmin ?
-      '<span class="role-badge admin">Manager / Admin</span>' :
+      '<span class="role-badge admin">Admin</span>' :
       '<span class="role-badge member">Member</span>';
 
     const statusBadge = isActive ?
@@ -696,7 +683,7 @@ function renderUsersTable(users) {
 }
 
 function openCreateUserModal() {
-  document.getElementById('userEditModalTitle').textContent = 'Add new team member';
+  document.getElementById('userEditModalTitle').textContent = 'Add user';
   document.getElementById('editUserId').value = '';
   const usernameInput = document.getElementById('editUsername');
   if (usernameInput) {
@@ -720,7 +707,7 @@ function openEditUserModal(userId) {
   const user = teamUsersList.find(u => u.id === userId);
   if (!user) return;
 
-  document.getElementById('userEditModalTitle').textContent = `Edit account: ${user.username}`;
+  document.getElementById('userEditModalTitle').textContent = `Edit user: ${user.username}`;
   document.getElementById('editUserId').value = user.id;
   const usernameInput = document.getElementById('editUsername');
   if (usernameInput) {
@@ -1030,8 +1017,10 @@ async function openCreditsModal() {
       document.getElementById('modalDailyRate').textContent = `about ${data.daily_rate}`;
       document.getElementById('modalResetDays').textContent = `${data.days_remaining} days`;
 
-      document.getElementById('inputMonthlyLimit').value = data.monthly_limit;
-      document.getElementById('inputSafetyBuffer').value = data.safety_buffer;
+      const limitEl = document.getElementById('inputMonthlyLimit');
+      const bufferEl = document.getElementById('inputSafetyBuffer');
+      if (limitEl) limitEl.value = data.monthly_limit;
+      if (bufferEl) bufferEl.value = data.safety_buffer;
 
       const tbody = document.getElementById('creditsLogsTableBody');
       const recent = data.recent_searches || [];

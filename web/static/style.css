@@ -1227,7 +1227,7 @@ body {
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
-  max-height: 88vh;
+  max-height: 85vh;
   margin: auto;
   position: relative;
   overflow: hidden;
@@ -1243,6 +1243,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .modal-title {
@@ -1258,15 +1259,19 @@ body {
 }
 
 .modal-body {
-  padding: 20px 24px;
+  padding: 24px;
   overflow-y: auto;
+  flex: 1 1 auto;
 }
 
 .modal-footer {
   padding: 14px 24px;
   border-top: 1px solid var(--color-border);
+  background-color: var(--color-subtle);
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .reason-tag {
@@ -1894,12 +1899,13 @@ body {
 .role-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 600;
-  text-transform: capitalize;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .role-badge.admin {
@@ -1915,11 +1921,13 @@ body {
 .status-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
   font-weight: 500;
-  text-transform: capitalize;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .status-badge.active {

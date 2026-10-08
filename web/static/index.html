@@ -101,20 +101,20 @@
             </button>
             <div class="user-menu-dropdown hidden" id="userMenuDropdown" role="menu" aria-orientation="vertical">
               <div class="user-menu-header">
-                <div class="user-menu-brand" id="userMenuBrandTitle">Manager / Super Admin</div>
-                <div class="user-menu-status" id="userMenuRoleTag">Admin · Full access</div>
+                <div class="user-menu-brand" id="userMenuBrandTitle">Admin</div>
+                <div class="user-menu-status" id="userMenuRoleTag">Admin</div>
               </div>
-              <button type="button" class="user-menu-item" role="menuitem" onclick="openAccountModal('profile')">
+              <button type="button" class="user-menu-item" role="menuitem" onclick="openAccountModal()">
                 <span class="menu-icon">👤</span>
                 <span>My account</span>
               </button>
-              <button type="button" class="user-menu-item" id="menuItemTeam" role="menuitem" onclick="openAccountModal('team')">
+              <button type="button" class="user-menu-item" id="menuItemTeam" role="menuitem" onclick="openTeamModal()">
                 <span class="menu-icon">👥</span>
-                <span>Team & users</span>
+                <span>Team members</span>
               </button>
               <button type="button" class="user-menu-item" role="menuitem" onclick="openCreditsModal()">
                 <span class="menu-icon">⚡</span>
-                <span>Credits and usage</span>
+                <span>Credits usage</span>
               </button>
               <button type="button" class="user-menu-item" role="menuitem" onclick="openSettingsModal()">
                 <span class="menu-icon">⚙️</span>
@@ -568,28 +568,6 @@
           </div>
         </div>
 
-        <!-- Editable Limits Setting -->
-        <div class="settings-box">
-          <h4 class="settings-box-title">Free tier thresholds</h4>
-          <div class="settings-inputs-row">
-            <div class="input-col">
-              <label for="inputMonthlyLimit" class="form-label">Monthly free limit</label>
-              <input type="number" id="inputMonthlyLimit" class="input-field-sm" min="1" max="10000" value="1000">
-              <p class="field-hint">Google provides 1,000 free Text Search requests/month.</p>
-            </div>
-            <div class="input-col">
-              <label for="inputSafetyBuffer" class="form-label">Safety buffer</label>
-              <input type="number" id="inputSafetyBuffer" class="input-field-sm" min="0" max="500" value="50">
-              <p class="field-hint">Hard stop triggers when remaining credits reach this buffer.</p>
-            </div>
-            <div class="input-col-btn">
-              <button type="button" class="btn btn-secondary btn-sm" onclick="saveCreditSettings()">
-                Save settings
-              </button>
-            </div>
-          </div>
-        </div>
-
         <!-- Official Disclaimer Note -->
         <div class="disclaimer-note">
           <span class="note-icon">ℹ️</span>
@@ -605,7 +583,7 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th style="width: 25%;">Date / Time</th>
+                <th style="width: 25%;">Date</th>
                 <th style="width: 45%;">Query</th>
                 <th style="width: 15%;">Credits</th>
                 <th style="width: 15%; text-align: right;">Status</th>
@@ -626,41 +604,30 @@
     </div>
   </div>
 
-  <!-- Account & Team Management Modal -->
-  <div class="modal-overlay hidden" id="accountModal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
-    <div class="modal-card modal-card-lg">
+  <!-- Dedicated My Account Modal -->
+  <div class="modal-overlay hidden" id="accountModal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle" onclick="closeModalOnBackdrop(event, 'accountModal')">
+    <div class="modal-card">
       <div class="modal-header">
         <div>
-          <h3 class="modal-title" id="accountModalTitle">Account & team management</h3>
-          <p class="modal-subtitle">Manage your profile, team members, and role permissions.</p>
+          <h3 class="modal-title" id="accountModalTitle">My account</h3>
+          <p class="modal-subtitle">Personal details and password</p>
         </div>
         <button type="button" class="btn-close" onclick="closeAccountModal()" aria-label="Close account modal">✕</button>
       </div>
 
-      <!-- Segmented Tabs -->
-      <div class="account-nav-tabs">
-        <button type="button" class="account-tab-btn active" id="accountTabBtnProfile" onclick="switchAccountTab('profile')">
-          👤 My profile
-        </button>
-        <button type="button" class="account-tab-btn" id="accountTabBtnTeam" onclick="switchAccountTab('team')">
-          👥 Team & users (Manager level)
-        </button>
-      </div>
-
-      <!-- Tab 1: Profile -->
-      <div class="account-tab-content" id="accountContentProfile">
+      <div class="modal-body">
         <form onsubmit="handleProfileFormSubmit(event)">
           <h4 class="settings-section-title">Personal information</h4>
           <div class="settings-grid">
             <div class="settings-field">
               <label for="profUsername">Username</label>
               <input type="text" id="profUsername" class="input-field-sm" readonly disabled style="opacity: 0.7;">
-              <span class="field-hint">Unique account username identifier.</span>
+              <span class="field-hint">Unique username identifier.</span>
             </div>
             <div class="settings-field">
-              <label for="profRole">Role level</label>
+              <label for="profRole">Role</label>
               <div style="margin-top: 6px;">
-                <span class="role-badge admin" id="profRoleBadge">Manager / Admin</span>
+                <span class="role-badge admin" id="profRoleBadge">Admin</span>
               </div>
               <span class="field-hint">Your account permission tier.</span>
             </div>
@@ -669,17 +636,17 @@
               <input type="text" id="profDisplayName" class="input-field-sm" placeholder="e.g. Sajjad Hassan">
             </div>
             <div class="settings-field">
-              <label for="profEmail">Email address</label>
+              <label for="profEmail">Email</label>
               <input type="email" id="profEmail" class="input-field-sm" placeholder="e.g. sajjad@example.com">
             </div>
           </div>
           <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
-            <button type="submit" class="btn btn-secondary btn-sm" id="btnSaveProfile">Save profile details</button>
+            <button type="submit" class="btn btn-secondary btn-sm" id="btnSaveProfile">Save profile</button>
           </div>
         </form>
 
         <form onsubmit="handlePasswordChangeSubmit(event)" style="margin-top: 24px; border-top: 1px solid var(--color-border-subtle); padding-top: 18px;">
-          <h4 class="settings-section-title">Security & password</h4>
+          <h4 class="settings-section-title">Password</h4>
           <div class="settings-grid">
             <div class="settings-field">
               <label for="pwdCurrent">Current password</label>
@@ -696,15 +663,31 @@
         </form>
       </div>
 
-      <!-- Tab 2: Team & Users (Manager Level) -->
-      <div class="account-tab-content hidden" id="accountContentTeam">
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeAccountModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dedicated Team Management Modal -->
+  <div class="modal-overlay hidden" id="teamModal" role="dialog" aria-modal="true" aria-labelledby="teamModalTitle" onclick="closeModalOnBackdrop(event, 'teamModal')">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title" id="teamModalTitle">Team members</h3>
+          <p class="modal-subtitle">Manage team accounts and permissions</p>
+        </div>
+        <button type="button" class="btn-close" onclick="closeTeamModal()" aria-label="Close team modal">✕</button>
+      </div>
+
+      <div class="modal-body">
         <div class="users-header-row">
           <div>
-            <h4 style="font-size: 14px; font-weight: 600; color: var(--color-text-main);">User accounts & permissions</h4>
-            <p style="font-size: 12px; color: var(--color-text-muted);">As a Manager / Admin, you have access to create, update, and manage all accounts.</p>
+            <h4 style="font-size: 14px; font-weight: 600; color: var(--color-text-main);">User accounts</h4>
+            <p style="font-size: 12px; color: var(--color-text-muted);">Manage member access and roles.</p>
           </div>
           <button type="button" class="btn btn-primary btn-sm" onclick="openCreateUserModal()">
-            + Add new user
+            + Add user
           </button>
         </div>
 
@@ -713,7 +696,7 @@
             <thead>
               <tr>
                 <th style="width: 25%;">User</th>
-                <th style="width: 25%;">Display name / Email</th>
+                <th style="width: 25%;">Contact</th>
                 <th style="width: 15%;">Role</th>
                 <th style="width: 15%;">Status</th>
                 <th style="width: 20%; text-align: right;">Actions</th>
@@ -727,16 +710,16 @@
       </div>
 
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary btn-sm" onclick="closeAccountModal()">Close</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeTeamModal()">Close</button>
       </div>
     </div>
   </div>
 
   <!-- Create / Edit User Sub-Modal -->
-  <div class="modal-overlay hidden" id="userEditModal" role="dialog" aria-modal="true" aria-labelledby="userEditModalTitle">
+  <div class="modal-overlay hidden" id="userEditModal" role="dialog" aria-modal="true" aria-labelledby="userEditModalTitle" onclick="closeModalOnBackdrop(event, 'userEditModal')">
     <div class="modal-card">
       <div class="modal-header">
-        <h3 class="modal-title" id="userEditModalTitle">Add new user</h3>
+        <h3 class="modal-title" id="userEditModalTitle">Add user</h3>
         <button type="button" class="btn-close" onclick="closeUserEditModal()" aria-label="Close user editor">✕</button>
       </div>
       <form onsubmit="handleUserFormSubmit(event)">
@@ -750,8 +733,8 @@
             <div class="settings-field">
               <label for="editRole">Role</label>
               <select id="editRole" class="select-field">
-                <option value="member">Standard Member</option>
-                <option value="admin">Manager / Administrator</option>
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
               </select>
             </div>
             <div class="settings-field">
