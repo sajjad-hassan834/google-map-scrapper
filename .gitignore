@@ -3,6 +3,9 @@
 
 # Scrape outputs (may contain personal data — never commit)
 *.csv
+*.db
+*.sqlite
+*.sqlite3
 results-*.json
 out/
 output/

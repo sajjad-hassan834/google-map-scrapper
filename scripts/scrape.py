@@ -144,6 +144,14 @@ def main():
     ap.add_argument("--fields", help="comma-separated columns to keep (overrides the default lead set)")
     ap.add_argument("--socials", action="store_true",
                     help="also find Instagram/Facebook/LinkedIn from each website (0 LLM tokens; slower)")
+    ap.add_argument("--no-website", action="store_true",
+                    help="filter to keep ONLY businesses that DO NOT have a website")
+    ap.add_argument("--min-reviews", type=int, default=0,
+                    help="minimum number of Google reviews required (e.g. --min-reviews 1)")
+    ap.add_argument("--min-rating", type=float, default=0.0,
+                    help="minimum star rating required (e.g. --min-rating 4.0)")
+    ap.add_argument("--has-phone", action="store_true",
+                    help="only keep businesses with a phone number")
     a = ap.parse_args()
 
     keywords = collect_keywords(a)
@@ -216,7 +224,31 @@ def main():
     else:
         fields = LEAD
     results = [{k: r.get(k, "") for k in fields} for r in rows]
-    print(f"✓ Done — {len(results)} businesses (fields: {', '.join(fields)}).")
+    print(f"✓ Scraped — {len(results)} businesses from Google Maps.")
+
+    if a.no_website or a.min_reviews > 0 or a.min_rating > 0 or a.has_phone:
+        filtered = []
+        for r in results:
+            site = (r.get("website") or "").strip()
+            if a.no_website and site:
+                continue
+            try:
+                revs = int(float(r.get("review_count") or 0))
+            except (ValueError, TypeError):
+                revs = 0
+            if revs < a.min_reviews:
+                continue
+            try:
+                rate = float(r.get("review_rating") or 0.0)
+            except (ValueError, TypeError):
+                rate = 0.0
+            if rate < a.min_rating:
+                continue
+            if a.has_phone and not (r.get("phone") or "").strip():
+                continue
+            filtered.append(r)
+        print(f"★ Filter applied: {len(filtered)}/{len(results)} businesses qualified (no_website={a.no_website}, min_reviews={a.min_reviews}, min_rating={a.min_rating}, has_phone={a.has_phone}).")
+        results = filtered
 
     if a.socials:
         print("▶ Finding socials (Instagram / Facebook / LinkedIn) on each website…")

@@ -49,13 +49,33 @@ cd google-maps-scraper-kit
 docker compose up -d
 ```
 
+### 🌟 Launch the Web Dashboard (Frontend)
+Run the built-in UI for finding businesses with **Google Reviews & NO Website**:
+```bash
+python run_web.py
+```
+Open **`http://localhost:5000`** in your browser.
+- **Dual-Engine Support:** Query using your **Google Places API Key** (ultra-fast, official) OR the **Local Docker Scraper** (`gosom`).
+- **High-Intent Lead Filters:** Filter by "No Website Only" (Goldmine for agencies & web designers), "Min Google Reviews" (1+, 5+, 10+), and "Must have phone".
+- **Outreach Generator:** Instant cold pitch scripts tailored to each business's review count and missing site.
+- **Export Options:** 1-click CSV export, JSON download, and copy all phone numbers.
+
+---
+
+### Command Line Lead Filtering
+To filter directly from terminal:
+```bash
+# Using Google Places API (instant):
+python scripts/places_search.py "roofers in Tampa FL" --api-key YOUR_KEY --no-website --min-reviews 1
+
+# Using Local Scraper (free, deeper):
+python scripts/scrape.py "handyman in Tampa FL" --city "Tampa, FL" --depth 10 --no-website --min-reviews 1
+```
+
+Or run standard scrape:
 ```bash
 ./scripts/scrape.sh "coffee shops in Austin TX" 30.2672 -97.7431 5
 ```
-
-Or open the folder in Claude Code and say:
-
-> Scrape gyms in Miami and give me phones and websites.
 
 ### Example output
 

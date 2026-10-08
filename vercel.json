@@ -1,0 +1,17 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://YOUR-RAILWAY-BACKEND.up.railway.app/api/$1"
+    },
+    {
+      "source": "/",
+      "destination": "/web/static/index.html"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/web/static/$1"
+    }
+  ]
+}

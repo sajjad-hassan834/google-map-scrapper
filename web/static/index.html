@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MapLead — Local Business Lead Finder & CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+  <!-- Top Navigation Bar -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="topbar-left">
+        <a href="#" class="brand-link" onclick="setAppMode('search'); return false;">
+          <span class="brand-name">MapLead</span>
+        </a>
+        <nav class="nav-tabs" aria-label="Main Navigation">
+          <button class="nav-tab active" id="tabNavSearch" onclick="setAppMode('search')" type="button">
+            Find leads
+          </button>
+          <button class="nav-tab" id="tabNavCrm" onclick="setAppMode('crm')" type="button">
+            My leads
+            <span class="nav-count" id="navCrmCount">0</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="topbar-right">
+        <div class="system-status" id="systemStatus">
+          <span class="status-dot"></span>
+          <span class="status-label">Google API connected · Scraper online</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="page-container">
+    
+    <!-- ========================================== -->
+    <!-- VIEW 1: FIND LEADS                         -->
+    <!-- ========================================== -->
+    <section id="viewFindLeads" class="view-section">
+      <!-- Search Form Area -->
+      <div class="search-section">
+        <form id="searchForm" class="search-form" onsubmit="handleSearchSubmit(event)">
+          <div class="search-input-group">
+            <label for="inputQuery" class="search-label">What business, and where?</label>
+            <div class="search-box-row">
+              <input 
+                type="text" 
+                id="inputQuery" 
+                class="search-input" 
+                placeholder="e.g. roofers in Tampa FL, dentists in Austin TX" 
+                value="roofers in Tampa FL" 
+                required
+                autocomplete="off"
+              >
+              <button type="submit" class="btn btn-primary" id="btnSubmitSearch">
+                <span class="btn-spinner hidden" id="searchSpinner"></span>
+                <span id="btnSubmitText">Find leads</span>
+              </button>
+            </div>
+            <p class="search-hint">Best format: <strong>[Niche] in [City, State]</strong>. Try auto detailing in Miami FL, painters in Denver CO.</p>
+          </div>
+
+          <!-- Secondary Controls Row (Mode + Filters Toggle) -->
+          <div class="search-controls-row">
+            <div class="search-mode-selector">
+              <span class="control-label">Search engine:</span>
+              <label class="radio-label">
+                <input type="radio" name="searchEngine" value="places" checked onchange="switchEngine('places')">
+                <span>Fast search (Google Places)</span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="searchEngine" value="scraper" onchange="switchEngine('scraper')">
+                <span>Deep search (Local scraper)</span>
+              </label>
+            </div>
+
+            <button type="button" class="btn btn-subtle filter-toggle-btn" id="btnToggleFilters" onclick="toggleFiltersPanel()">
+              <span id="filterToggleText">Show filters</span>
+              <span class="filter-active-indicator" id="filterIndicator">4 active</span>
+            </button>
+          </div>
+
+          <!-- Collapsible Filters Panel (Collapsed by Default) -->
+          <div class="filters-panel hidden" id="filtersPanel">
+            <div class="filters-grid">
+              <!-- Filter: No website only -->
+              <div class="filter-col">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkNoWebsite" checked>
+                  <span class="checkbox-title">No website only</span>
+                </label>
+                <p class="filter-help">Only return businesses without an official website.</p>
+              </div>
+
+              <!-- Filter: Minimum reviews -->
+              <div class="filter-col">
+                <label for="inputMinReviews" class="filter-label">Minimum reviews</label>
+                <div class="pill-input-row">
+                  <input type="number" id="inputMinReviews" class="input-number" min="0" max="500" value="1">
+                  <div class="pill-group">
+                    <button type="button" class="pill-btn active" onclick="setMinReviews(1)">1+</button>
+                    <button type="button" class="pill-btn" onclick="setMinReviews(5)">5+</button>
+                    <button type="button" class="pill-btn" onclick="setMinReviews(10)">10+</button>
+                    <button type="button" class="pill-btn" onclick="setMinReviews(25)">25+</button>
+                  </div>
+                </div>
+                <p class="filter-help">Filters out inactive listings.</p>
+              </div>
+
+              <!-- Filter: Minimum rating -->
+              <div class="filter-col">
+                <label for="selectMinRating" class="filter-label">Minimum rating</label>
+                <select id="selectMinRating" class="select-field">
+                  <option value="0">Any rating</option>
+                  <option value="3.5">3.5★ and above</option>
+                  <option value="4.0" selected>4.0★ and above</option>
+                  <option value="4.5">4.5★ and above</option>
+                </select>
+                <p class="filter-help">Focus on businesses with high customer satisfaction.</p>
+              </div>
+
+              <!-- Filter: Must have phone -->
+              <div class="filter-col">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="checkMustHavePhone" checked>
+                  <span class="checkbox-title">Must have phone number</span>
+                </label>
+                <p class="filter-help">Ensure contact phone is available for outreach.</p>
+              </div>
+
+              <!-- Depth (only for scraper mode) -->
+              <div class="filter-col hidden" id="scraperDepthCol">
+                <label for="inputDepth" class="filter-label">Scroll depth</label>
+                <input type="number" id="inputDepth" class="input-number" min="1" max="30" value="10">
+                <p class="filter-help">Controls how far the local scraper scrolls (5 to 20).</p>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Results Area -->
+      <div class="results-section">
+        <!-- Results Summary & Action Toolbar -->
+        <div class="results-toolbar">
+          <div class="results-summary">
+            <span id="resultsSummaryText">Ready to search.</span>
+            <button type="button" class="link-btn hidden" id="btnWhyHidden" onclick="openExcludedModal()">
+              Why were others hidden?
+            </button>
+          </div>
+
+          <div class="results-actions">
+            <button type="button" class="btn btn-primary btn-sm" id="btnSaveAll" onclick="importAllToCrm()" disabled>
+              Save all
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnExportCsv" onclick="exportCsv()" disabled>
+              Export CSV
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" id="btnCopyPhones" onclick="copyAllPhones()" disabled>
+              Copy phones
+            </button>
+          </div>
+        </div>
+
+        <!-- Progress Feedback Bar -->
+        <div class="progress-bar-container hidden" id="progressBox">
+          <div class="progress-bar-text" id="progressMessage">Searching Google Places...</div>
+          <div class="progress-track">
+            <div class="progress-fill" id="progressBarFill"></div>
+          </div>
+        </div>
+
+        <!-- Qualified Leads Table -->
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 32%;">Business</th>
+                <th style="width: 20%;">Reviews and rating</th>
+                <th style="width: 18%;">Phone</th>
+                <th style="width: 20%;">Address</th>
+                <th style="width: 10%; text-align: right;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="leadsTableBody">
+              <tr class="empty-row">
+                <td colspan="5">
+                  <div class="empty-state">
+                    <p class="empty-title">No search run yet</p>
+                    <p class="empty-subtitle">Enter a business type and city above to find businesses that have reviews and no website.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- VIEW 2: MY LEADS (CRM PIPELINE)            -->
+    <!-- ========================================== -->
+    <section id="viewMyLeads" class="view-section hidden">
+      <!-- CRM Header & Quiet Stat Line -->
+      <div class="crm-header-row">
+        <div>
+          <h2 class="section-title">My leads</h2>
+          <p class="quiet-stats" id="crmQuietStats">0 leads · 0 contacted · 0 won</p>
+        </div>
+        <div class="crm-top-actions">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="exportCrmCsv()">
+            Export CSV
+          </button>
+        </div>
+      </div>
+
+      <!-- CRM Stage Tabs & Filter Row -->
+      <div class="crm-filter-bar">
+        <div class="stage-tabs" role="tablist">
+          <button class="stage-tab active" data-stage="ALL" onclick="filterCrmStage('ALL')" type="button">
+            All <span class="stage-count" id="countStageAll">0</span>
+          </button>
+          <button class="stage-tab" data-stage="New Lead" onclick="filterCrmStage('New Lead')" type="button">
+            New <span class="stage-count" id="countStageNew">0</span>
+          </button>
+          <button class="stage-tab" data-stage="Contacted" onclick="filterCrmStage('Contacted')" type="button">
+            Contacted <span class="stage-count" id="countStageContacted">0</span>
+          </button>
+          <button class="stage-tab" data-stage="In Discussion" onclick="filterCrmStage('In Discussion')" type="button">
+            In discussion <span class="stage-count" id="countStageDiscussion">0</span>
+          </button>
+          <button class="stage-tab" data-stage="Closed Won" onclick="filterCrmStage('Closed Won')" type="button">
+            Won <span class="stage-count" id="countStageWon">0</span>
+          </button>
+          <button class="stage-tab" data-stage="Not Interested" onclick="filterCrmStage('Not Interested')" type="button">
+            Lost <span class="stage-count" id="countStageLost">0</span>
+          </button>
+        </div>
+
+        <div class="crm-search-box">
+          <input 
+            type="text" 
+            id="crmSearchInput" 
+            class="input-search-inline" 
+            placeholder="Search saved leads..." 
+            oninput="renderCrmTable()"
+          >
+        </div>
+      </div>
+
+      <!-- CRM Leads Table -->
+      <div class="table-wrapper">
+        <table class="data-table crm-table">
+          <thead>
+            <tr>
+              <th style="width: 30%;">Business</th>
+              <th style="width: 18%;">Reviews and rating</th>
+              <th style="width: 18%;">Phone</th>
+              <th style="width: 18%;">Stage</th>
+              <th style="width: 16%; text-align: right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="crmTableBody">
+            <tr class="empty-row">
+              <td colspan="5">
+                <div class="empty-state">
+                  <p class="empty-title">Your CRM is empty</p>
+                  <p class="empty-subtitle">Switch to "Find leads", run a query, and click "Save" on qualified prospects to start your pipeline.</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- ========================================== -->
+  <!-- SLIDE-OVER DRAWER: LEAD DETAILS & OUTREACH -->
+  <!-- ========================================== -->
+  <div class="drawer-backdrop hidden" id="drawerBackdrop" onclick="closeLeadDrawer()"></div>
+  <aside class="side-drawer hidden" id="leadDrawer" aria-label="Lead Details">
+    <div class="drawer-header">
+      <div>
+        <h3 class="drawer-title" id="drawerLeadName">Business name</h3>
+        <p class="drawer-subtitle" id="drawerLeadCategory">Category</p>
+      </div>
+      <button type="button" class="btn-close" onclick="closeLeadDrawer()" aria-label="Close panel">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Quick Info Block -->
+      <div class="drawer-section">
+        <div class="info-row">
+          <span class="info-label">Reviews</span>
+          <span class="info-value" id="drawerReviews">0 (0.0★)</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Phone</span>
+          <span class="info-value" id="drawerPhone">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Address</span>
+          <span class="info-value" id="drawerAddress">—</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Google Maps</span>
+          <a href="#" target="_blank" rel="noopener" class="text-link" id="drawerMapsLink">Open in Maps ↗</a>
+        </div>
+      </div>
+
+      <!-- Pipeline Stage Selector -->
+      <div class="drawer-section">
+        <label for="drawerStageSelect" class="form-label">Stage in pipeline</label>
+        <select id="drawerStageSelect" class="select-field" onchange="handleDrawerStageChange(this.value)">
+          <option value="New Lead">New</option>
+          <option value="Contacted">Contacted</option>
+          <option value="Audit Sent">Audit sent</option>
+          <option value="In Discussion">In discussion</option>
+          <option value="Closed Won">Won</option>
+          <option value="Not Interested">Lost</option>
+        </select>
+      </div>
+
+      <!-- Notes Area -->
+      <div class="drawer-section">
+        <div class="section-title-row">
+          <label for="drawerNotesInput" class="form-label">Notes</label>
+          <span class="quiet-hint" id="notesSavedIndicator">Saved</span>
+        </div>
+        <textarea 
+          id="drawerNotesInput" 
+          class="textarea-field" 
+          rows="3" 
+          placeholder="e.g. Spoke with owner Mike on Tuesday. Mentioned pricing and scheduling."
+          oninput="handleDrawerNotesInput()"
+        ></textarea>
+        <div class="follow-up-row">
+          <label for="drawerFollowUpInput" class="quiet-hint">Follow-up date:</label>
+          <input type="date" id="drawerFollowUpInput" class="input-date" onchange="handleDrawerNotesInput()">
+        </div>
+      </div>
+
+      <!-- Ready-to-Copy Outreach Script -->
+      <div class="drawer-section">
+        <div class="section-title-row">
+          <label class="form-label">Outreach message</label>
+          <button type="button" class="btn btn-secondary btn-xs" onclick="copyOutreachMessage()">
+            Copy message
+          </button>
+        </div>
+        <div class="outreach-message-box" id="drawerOutreachMessage">
+          <!-- Dynamically populated -->
+        </div>
+        <div class="drawer-action-row">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnDrawerWhatsApp" onclick="launchDrawerWhatsApp()">
+            Open in WhatsApp
+          </button>
+          <button type="button" class="btn btn-subtle btn-sm btn-destructive" onclick="deleteDrawerLead()">
+            Delete lead
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ========================================== -->
+  <!-- MODAL: EXCLUDED LISTINGS & TRANSPARENCY    -->
+  <!-- ========================================== -->
+  <div class="modal-backdrop hidden" id="excludedModal" onclick="closeModalOnBackdrop(event, 'excludedModal')">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3 class="modal-title">Why were others hidden?</h3>
+          <p class="modal-subtitle" id="modalExcludedSubtitle">Google returned businesses that were filtered out to save you time.</p>
+        </div>
+        <button type="button" class="btn-close" onclick="closeExcludedModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrapper modal-table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 35%;">Business</th>
+                <th style="width: 35%;">Reason hidden</th>
+                <th style="width: 15%;">Reviews</th>
+                <th style="width: 15%;">Rating</th>
+              </tr>
+            </thead>
+            <tbody id="excludedModalTableBody">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" onclick="closeExcludedModal()">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Toast Notification -->
+  <div class="toast-notification hidden" id="toastNotification" role="alert" aria-live="polite">
+    <span class="toast-message" id="toastMessage">Action completed</span>
+  </div>
+
+  <script src="app.js?v=7"></script>
+</body>
+</html>
